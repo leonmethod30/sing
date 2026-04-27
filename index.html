@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pitch Graph Viewer & Recorder</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.2.3/dist/alphaTab.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0; padding: 20px; background-color: #f0f2f5; color: #333;
+        }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .toolbar {
+            background: #ffffff; padding: 15px 20px; border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px;
+            display: flex; gap: 15px; align-items: center; flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+            background-color: #0056b3; color: white; border: none; border-radius: 6px;
+        }
+        button:hover:not(:disabled) { background-color: #004494; }
+        button:disabled { background-color: #a0c4e8; cursor: not-allowed; }
+        #record-btn { background-color: #dc3545; }
+        #record-btn:hover:not(:disabled) { background-color: #b02a37; }
+        #record-btn.recording { animation: pulse 1.5s infinite; }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+        }
+
+        #status { font-size: 14px; color: #666; margin-left: auto; font-weight: bold; }
+        
+        #graph-wrapper { 
+            background: #ffffff; padding: 20px; border-radius: 8px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1); height: 600px; 
+        }
+
+        #hidden-audio-player { display: none; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Piano Roll Graph</h1>
+        
+        <div class="toolbar">
+            <input type="file" id="file-input" accept=".xml,.musicxml">
+            <button id="play-pause-btn" disabled>Play / Pause Audio</button>
+            <button id="record-btn">🎤 Start Recording</button>
+            <span id="status">Loading audio engine...</span>
+        </div>
+
+        <div id="graph-wrapper">
+            <canvas id="pitchChart"></canvas>
+        </div>
+
+        <div id="hidden-audio-player"></div>
+    </div>
+
+    <script>
+        // Global state for Time Signature and Cursor Tracking
+        window.beatsPerBar = 4;
+        window.currentCursorBeat = 0;
+        window.isCursorActive = false;
+
+        // --- 1. GRAPH SETUP & CUSTOM CURSOR PLUGIN ---
+        const verticalCursorPlugin = {
+            id: 'verticalCursor',
+            afterDraw: (chart) => {
+                if (window.isCursorActive && window.currentCursorBeat !== undefined) {
+                    const ctx = chart.ctx;
+                    const xAxis = chart.scales.x;
+                    const yAxis = chart.scales.y;
+                    
+                    const xPixel = xAxis.getPixelForValue(window.currentCursorBeat);
+
+                    if (xPixel >= xAxis.left && xPixel <= xAxis.right) {
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.moveTo(xPixel, yAxis.top);
+                        ctx.lineTo(xPixel, yAxis.bottom);
+                        ctx.lineWidth = 3;
+                        ctx.strokeStyle = 'rgba(255, 204, 0, 0.8)'; 
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                }
+            }
+        };
+
+        const ctx = document.getElementById('pitchChart').getContext('2d');
+        const pitchChart = new Chart(ctx, {
+            type: 'scatter',
+            plugins: [verticalCursorPlugin], 
+            data: {
+                datasets: [
+                    {
+                        label: 'Uploaded Score (MusicXML)',
+                        data: [], 
+                        borderColor: '#0056b3',
+                        backgroundColor: '#0056b3',
+                        showLine: true,
+                        pointRadius: 0,
+                        borderWidth: 4,
+                        spanGaps: false 
+                    },
+                    {
+                        label: 'Microphone Recording',
+                        data: [], 
+                        backgroundColor: '#dc3545',
+                        pointRadius: 3,
+                        showLine: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false, 
+                scales: {
+                    x: {
+                        type: 'linear', 
+                        position: 'bottom',
+                        min: 0,
+                        title: { display: true, text: 'Time (Beats & Bars)' },
+                        ticks: { stepSize: 1 },
+                        grid: {
+                            lineWidth: (context) => {
+                                if (context.tick && context.tick.value % window.beatsPerBar === 0) return 2.5;
+                                return 1;
+                            },
+                            color: (context) => {
+                                if (context.tick && context.tick.value % window.beatsPerBar === 0) return 'rgba(0,0,0,0.4)';
+                                return 'rgba(0,0,0,0.1)';
+                            }
+                        }
+                    },
+                    y: {
+                        type: 'linear', 
+                        min: 36, 
+                        max: 96, 
+                        title: { display: true, text: 'Pitch' },
+                        ticks: {
+                            stepSize: 1, 
+                            autoSkip: false, 
+                            font: { size: 9 }, 
+                            callback: function(value) {
+                                const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+                                if (value >= 21 && value <= 108) {
+                                    return notes[value % 12] + (Math.floor(value / 12) - 1);
+                                }
+                                return '';
+                            }
+                        },
+                        grid: {
+                            lineWidth: (context) => {
+                                if (context.tick && context.tick.value % 12 === 0) return 2.5;
+                                return 1;
+                            },
+                            color: (context) => {
+                                if (context.tick && context.tick.value % 12 === 0) return 'rgba(0,0,0,0.4)';
+                                return 'rgba(0,0,0,0.1)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // --- 2. MUSICXML CUSTOM PARSER ---
+        function parseXMLToGraph(xmlString) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+            const notes = xmlDoc.getElementsByTagName("note");
+            
+            let divisions = 1;
+            const divNodes = xmlDoc.getElementsByTagName("divisions");
+            if (divNodes.length > 0) divisions = parseInt(divNodes[0].textContent);
+
+            const beatsNode = xmlDoc.getElementsByTagName("beats");
+            if (beatsNode.length > 0) {
+                window.beatsPerBar = parseInt(beatsNode[0].textContent) || 4;
+            }
+
+            let currentBeat = 0;
+            const graphData = [];
+            
+            let minMidiFound = Infinity;
+            let maxMidiFound = -Infinity;
+
+            for (let i = 0; i < notes.length; i++) {
+                const note = notes[i];
+                let duration = 0;
+                
+                const durNode = note.getElementsByTagName("duration");
+                if (durNode.length > 0) duration = parseInt(durNode[0].textContent);
+
+                const pitchNode = note.getElementsByTagName("pitch");
+                if (pitchNode.length > 0) {
+                    const step = pitchNode[0].getElementsByTagName("step")[0].textContent;
+                    const octave = parseInt(pitchNode[0].getElementsByTagName("octave")[0].textContent);
+                    
+                    let alter = 0;
+                    const alterNode = pitchNode[0].getElementsByTagName("alter");
+                    if (alterNode.length > 0) alter = parseInt(alterNode[0].textContent);
+
+                    const stepMap = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
+                    const midiNote = stepMap[step] + alter + (octave + 1) * 12;
+                    
+                    minMidiFound = Math.min(minMidiFound, midiNote);
+                    maxMidiFound = Math.max(maxMidiFound, midiNote);
+
+                    const lengthInBeats = duration / divisions;
+
+                    graphData.push({x: currentBeat, y: midiNote});
+                    graphData.push({x: currentBeat + lengthInBeats, y: midiNote});
+                    graphData.push({x: null, y: null}); 
+                }
+                
+                if (note.getElementsByTagName("chord").length === 0) {
+                     const lengthInBeats = duration / divisions;
+                     currentBeat += lengthInBeats;
+                }
+            }
+
+            let yMin = 36;
+            let yMax = 96; 
+            
+            if (minMidiFound !== Infinity && maxMidiFound !== -Infinity) {
+                yMin = Math.floor(minMidiFound / 12) * 12;
+                yMax = Math.ceil(maxMidiFound / 12) * 12; 
+                if (yMax === yMin) yMax += 12; 
+            }
+
+            return { data: graphData, yMin: yMin, yMax: yMax };
+        }
+
+        // --- 3. ALPHATAB AUDIO ENGINE (PLAYBACK TRACKING) ---
+        const settings = {
+            player: {
+                enablePlayer: true,
+                soundFont: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.2.3/dist/soundfont/sonivox.sf2',
+            }
+        };
+
+        const api = new alphaTab.AlphaTabApi(document.getElementById('hidden-audio-player'), settings);
+        
+        const fileInput = document.getElementById('file-input');
+        const playPauseBtn = document.getElementById('play-pause-btn');
+        const recordBtn = document.getElementById('record-btn');
+        const statusText = document.getElementById('status');
+
+        api.soundFontLoad.on(() => {
+            statusText.innerText = "Ready. Upload XML or record your instrument!";
+            playPauseBtn.disabled = false;
+        });
+
+        api.playerStateChanged.on((args) => {
+            if (args.state === 1) {
+                playPauseBtn.innerText = 'Pause Audio';
+                window.isCursorActive = true;
+            } else {
+                playPauseBtn.innerText = 'Play Audio';
+                window.isCursorActive = false;
+                pitchChart.update('none'); 
+            }
+        });
+
+        let lastPlaybackUpdate = performance.now();
+        
+        api.playerPositionChanged.on((args) => {
+            if (window.isCursorActive && !isRecording) {
+                window.currentCursorBeat = (args.currentTick || 0) / 960;
+                
+                const now = performance.now();
+                if (now - lastPlaybackUpdate > 33) {
+                    pitchChart.update('none'); 
+                    lastPlaybackUpdate = now;
+                }
+            }
+        });
+
+        playPauseBtn.addEventListener('click', () => api.playPause());
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            statusText.innerText = "Parsing XML...";
+            
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                api.load(new Uint8Array(event.target.result));
+                
+                const decoder = new TextDecoder();
+                const xmlString = decoder.decode(event.target.result);
+                
+                const parsed = parseXMLToGraph(xmlString);
+                
+                pitchChart.data.datasets[0].data = parsed.data;
+                pitchChart.options.scales.y.min = parsed.yMin;
+                pitchChart.options.scales.y.max = parsed.yMax;
+                
+                pitchChart.update();
+                
+                statusText.innerText = `Score plotted! Detected ${window.beatsPerBar} beats per bar.`;
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // --- 4. MICROPHONE RECORDING TRACKING ---
+        let audioContext, analyser, microphone;
+        let isRecording = false;
+        let recordingInterval;
+
+        function autoCorrelate(buf, sampleRate) {
+            let SIZE = buf.length;
+            let rms = 0;
+            for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+            rms = Math.sqrt(rms / SIZE);
+            if (rms < 0.002) return -1;
+
+            let r1 = 0, r2 = SIZE - 1, thres = 0.05;
+            for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+            for (let i = 1; i < SIZE / 2; i++) if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+            buf = buf.slice(r1, r2);
+            SIZE = buf.length;
+
+            let c = new Array(SIZE).fill(0);
+            for (let i = 0; i < SIZE; i++) {
+                for (let j = 0; j < SIZE - i; j++) c[i] = c[i] + buf[j] * buf[j + i];
+            }
+
+            let d = 0; while (c[d] > c[d + 1]) d++;
+            let maxval = -1, maxpos = -1;
+            for (let i = d; i < SIZE; i++) {
+                if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+            }
+            let T0 = maxpos;
+            let x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+            let a = (x1 + x3 - 2 * x2) / 2;
+            let b = (x3 - x1) / 2;
+            if (a) T0 = T0 - b / (2 * a);
+
+            return sampleRate / T0;
+        }
+
+        async function toggleRecording() {
+            if (isRecording) {
+                // STOP RECORDING
+                isRecording = false;
+                window.isCursorActive = false; 
+                
+                clearInterval(recordingInterval);
+                if (microphone) microphone.disconnect();
+                recordBtn.innerText = "🎤 Start Recording";
+                recordBtn.classList.remove("recording");
+                statusText.innerText = "Recording finished. Graph updated.";
+                pitchChart.update(); 
+                return;
+            }
+
+            try {
+                // Request mic stream FIRST so the browser's "Allow Audio" prompt doesn't pause the countdown
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
+                });
+
+                // Initialize audio context right away to ensure strict browser policies (like Safari) are satisfied
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Disable UI temporarily during countdown
+                recordBtn.disabled = true;
+                playPauseBtn.disabled = true;
+                
+                let countdownBeat = 4;
+                statusText.innerText = `Recording starts in: ${countdownBeat}...`;
+                
+                // 120 BPM = 500 milliseconds per beat
+                const countdownTimer = setInterval(() => {
+                    countdownBeat--;
+                    
+                    if (countdownBeat > 0) {
+                        statusText.innerText = `Recording starts in: ${countdownBeat}...`;
+                    } else {
+                        // COUNTDOWN FINISHED - START ACTUAL RECORDING
+                        clearInterval(countdownTimer);
+                        recordBtn.disabled = false;
+                        playPauseBtn.disabled = false;
+                        
+                        analyser = audioContext.createAnalyser();
+                        analyser.fftSize = 2048;
+                        microphone = audioContext.createMediaStreamSource(stream);
+                        microphone.connect(analyser);
+                        
+                        pitchChart.data.datasets[1].data = [];
+                        isRecording = true;
+                        window.isCursorActive = true; 
+
+                        recordBtn.innerText = "🛑 Stop Recording";
+                        recordBtn.classList.add("recording");
+                        statusText.innerText = "Listening at 10ms rate... Play an instrument!";
+
+                        const buffer = new Float32Array(analyser.fftSize);
+                        const startAudioTime = audioContext.currentTime;
+                        let lastChartUpdate = performance.now();
+
+                        const yMinVisible = pitchChart.options.scales.y.min;
+                        const yMaxVisible = pitchChart.options.scales.y.max;
+
+                        recordingInterval = setInterval(() => {
+                            analyser.getFloatTimeDomainData(buffer);
+                            const freq = autoCorrelate(buffer, audioContext.sampleRate);
+                            
+                            window.currentCursorBeat = (audioContext.currentTime - startAudioTime) * 2; 
+                            
+                            if (freq !== -1) {
+                                const midiNote = 12 * Math.log2(freq / 440) + 69;
+                                
+                                if (midiNote >= yMinVisible && midiNote <= yMaxVisible) {
+                                    pitchChart.data.datasets[1].data.push({ x: window.currentCursorBeat, y: midiNote });
+                                }
+                            }
+
+                            const now = performance.now();
+                            if (now - lastChartUpdate > 33) { 
+                                pitchChart.update('none'); 
+                                lastChartUpdate = now;
+                            }
+
+                        }, 10);
+                    }
+                }, 500); 
+
+            } catch (err) {
+                console.error("Microphone access denied:", err);
+                statusText.innerText = "Microphone access denied. Please check your browser permissions.";
+            }
+        }
+
+        recordBtn.addEventListener('click', toggleRecording);
+    </script>
+</body>
+</html>
