@@ -25,10 +25,14 @@
         }
         button:hover:not(:disabled) { background-color: #004494; }
         button:disabled { background-color: #a0c4e8; cursor: not-allowed; }
+        
         #record-btn { background-color: #dc3545; }
         #record-btn:hover:not(:disabled) { background-color: #b02a37; }
         #record-btn.recording { animation: pulse 1.5s infinite; }
         
+        #play-recording-btn { background-color: #28a745; }
+        #play-recording-btn:hover:not(:disabled) { background-color: #218838; }
+
         @keyframes pulse {
             0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
             70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
@@ -38,8 +42,25 @@
         #status { font-size: 14px; color: #666; margin-left: auto; font-weight: bold; }
         
         #graph-wrapper { 
+            position: relative; 
             background: #ffffff; padding: 20px; border-radius: 8px; 
             box-shadow: 0 2px 8px rgba(0,0,0,0.1); height: 600px; 
+        }
+
+        #countdown-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: none; 
+            align-items: center;
+            justify-content: center;
+            font-size: 180px;
+            font-weight: 900;
+            color: #dc3545; 
+            background: rgba(255, 255, 255, 0.75); 
+            text-shadow: 4px 4px 15px rgba(0,0,0,0.2);
+            z-index: 100;
+            pointer-events: none; 
+            border-radius: 8px;
         }
 
         #hidden-audio-player { display: none; }
@@ -52,12 +73,14 @@
         
         <div class="toolbar">
             <input type="file" id="file-input" accept=".xml,.musicxml">
-            <button id="play-pause-btn" disabled>Play / Pause Audio</button>
-            <button id="record-btn">🎤 Start Recording</button>
+            <button id="play-pause-btn" disabled>Play XML Audio</button>
+            <button id="record-btn" disabled>🎤 Start Recording</button>
+            <button id="play-recording-btn" disabled>▶ Play Recording</button>
             <span id="status">Loading audio engine...</span>
         </div>
 
         <div id="graph-wrapper">
+            <div id="countdown-overlay">4</div>
             <canvas id="pitchChart"></canvas>
         </div>
 
@@ -65,10 +88,21 @@
     </div>
 
     <script>
-        // Global state for Time Signature and Cursor Tracking
         window.beatsPerBar = 4;
         window.currentCursorBeat = 0;
         window.isCursorActive = false;
+        window.totalBeats = 0; 
+        window.currentBPM = 120;
+
+        const countdownOverlay = document.getElementById('countdown-overlay');
+
+        function getNoteStringFromMidi(midiValue) {
+            const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+            if (midiValue >= 21 && midiValue <= 108) {
+                return notes[midiValue % 12] + (Math.floor(midiValue / 12) - 1);
+            }
+            return '';
+        }
 
         // --- 1. GRAPH SETUP & CUSTOM CURSOR PLUGIN ---
         const verticalCursorPlugin = {
@@ -102,20 +136,22 @@
             data: {
                 datasets: [
                     {
-                        label: 'Uploaded Score (MusicXML)',
+                        label: 'Uploaded Score',
                         data: [], 
                         borderColor: '#0056b3',
                         backgroundColor: '#0056b3',
                         showLine: true,
                         pointRadius: 0,
+                        pointHitRadius: 10, 
                         borderWidth: 4,
                         spanGaps: false 
                     },
                     {
-                        label: 'Microphone Recording',
+                        label: 'Recorded Note',
                         data: [], 
                         backgroundColor: '#dc3545',
                         pointRadius: 3,
+                        pointHitRadius: 5,
                         showLine: false
                     }
                 ]
@@ -124,13 +160,36 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 animation: false, 
+                plugins: {
+                    // FIXED: Tell Chart.js not to draw the top legend
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        enabled: true,
+                        displayColors: false, 
+                        filter: function(tooltipItem) {
+                            return tooltipItem.datasetIndex === 0;
+                        },
+                        callbacks: {
+                            label: function(context) {
+                                const beatStr = context.parsed.x.toFixed(2);
+                                const noteStr = getNoteStringFromMidi(context.parsed.y);
+                                return `Beat: ${beatStr} | Note: ${noteStr}`;
+                            }
+                        }
+                    }
+                },
                 scales: {
                     x: {
                         type: 'linear', 
                         position: 'bottom',
                         min: 0,
-                        title: { display: true, text: 'Time (Beats & Bars)' },
-                        ticks: { stepSize: 1 },
+                        title: { display: false }, 
+                        ticks: { 
+                            display: false, 
+                            stepSize: 1 
+                        },
                         grid: {
                             lineWidth: (context) => {
                                 if (context.tick && context.tick.value % window.beatsPerBar === 0) return 2.5;
@@ -146,18 +205,11 @@
                         type: 'linear', 
                         min: 36, 
                         max: 96, 
-                        title: { display: true, text: 'Pitch' },
+                        title: { display: false }, 
                         ticks: {
+                            display: false, 
                             stepSize: 1, 
-                            autoSkip: false, 
-                            font: { size: 9 }, 
-                            callback: function(value) {
-                                const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-                                if (value >= 21 && value <= 108) {
-                                    return notes[value % 12] + (Math.floor(value / 12) - 1);
-                                }
-                                return '';
-                            }
+                            autoSkip: false
                         },
                         grid: {
                             lineWidth: (context) => {
@@ -189,7 +241,21 @@
                 window.beatsPerBar = parseInt(beatsNode[0].textContent) || 4;
             }
 
+            const perMinuteNodes = xmlDoc.getElementsByTagName("per-minute");
+            if (perMinuteNodes.length > 0) {
+                window.currentBPM = parseInt(perMinuteNodes[0].textContent) || 120;
+            } else {
+                const soundNodes = xmlDoc.getElementsByTagName("sound");
+                for (let i = 0; i < soundNodes.length; i++) {
+                    if (soundNodes[i].hasAttribute("tempo")) {
+                        window.currentBPM = parseInt(soundNodes[i].getAttribute("tempo")) || 120;
+                        break;
+                    }
+                }
+            }
+
             let currentBeat = 0;
+            let maxBeatFound = 0; 
             const graphData = [];
             
             let minMidiFound = Infinity;
@@ -201,6 +267,8 @@
                 
                 const durNode = note.getElementsByTagName("duration");
                 if (durNode.length > 0) duration = parseInt(durNode[0].textContent);
+
+                const lengthInBeats = duration / divisions;
 
                 const pitchNode = note.getElementsByTagName("pitch");
                 if (pitchNode.length > 0) {
@@ -216,8 +284,7 @@
                     
                     minMidiFound = Math.min(minMidiFound, midiNote);
                     maxMidiFound = Math.max(maxMidiFound, midiNote);
-
-                    const lengthInBeats = duration / divisions;
+                    maxBeatFound = Math.max(maxBeatFound, currentBeat + lengthInBeats);
 
                     graphData.push({x: currentBeat, y: midiNote});
                     graphData.push({x: currentBeat + lengthInBeats, y: midiNote});
@@ -225,8 +292,8 @@
                 }
                 
                 if (note.getElementsByTagName("chord").length === 0) {
-                     const lengthInBeats = duration / divisions;
                      currentBeat += lengthInBeats;
+                     maxBeatFound = Math.max(maxBeatFound, currentBeat); 
                 }
             }
 
@@ -234,12 +301,14 @@
             let yMax = 96; 
             
             if (minMidiFound !== Infinity && maxMidiFound !== -Infinity) {
-                yMin = Math.floor(minMidiFound / 12) * 12;
-                yMax = Math.ceil(maxMidiFound / 12) * 12; 
-                if (yMax === yMin) yMax += 12; 
+                yMin = minMidiFound - 6;
+                yMax = maxMidiFound + 6; 
+                
+                if (yMin < 0) yMin = 0;
+                if (yMax > 127) yMax = 127;
             }
 
-            return { data: graphData, yMin: yMin, yMax: yMax };
+            return { data: graphData, yMin: yMin, yMax: yMax, totalBeats: maxBeatFound };
         }
 
         // --- 3. ALPHATAB AUDIO ENGINE (PLAYBACK TRACKING) ---
@@ -255,28 +324,33 @@
         const fileInput = document.getElementById('file-input');
         const playPauseBtn = document.getElementById('play-pause-btn');
         const recordBtn = document.getElementById('record-btn');
+        const playRecordingBtn = document.getElementById('play-recording-btn');
         const statusText = document.getElementById('status');
 
         api.soundFontLoad.on(() => {
-            statusText.innerText = "Ready. Upload XML or record your instrument!";
-            playPauseBtn.disabled = false;
+            if (!window.totalBeats) {
+                statusText.innerText = "Audio engine ready. Upload an XML file to begin!";
+            }
         });
 
         api.playerStateChanged.on((args) => {
-            if (args.state === 1) {
-                playPauseBtn.innerText = 'Pause Audio';
+            if (args.state === 1) { 
+                playPauseBtn.innerText = 'Pause XML Audio';
                 window.isCursorActive = true;
+                if (!recordedAudio.paused) recordedAudio.pause();
             } else {
-                playPauseBtn.innerText = 'Play Audio';
-                window.isCursorActive = false;
-                pitchChart.update('none'); 
+                playPauseBtn.innerText = 'Play XML Audio';
+                if (!isRecording && recordedAudio.paused) {
+                    window.isCursorActive = false;
+                    pitchChart.update('none'); 
+                }
             }
         });
 
         let lastPlaybackUpdate = performance.now();
         
         api.playerPositionChanged.on((args) => {
-            if (window.isCursorActive && !isRecording) {
+            if (window.isCursorActive && !isRecording && recordedAudio.paused) {
                 window.currentCursorBeat = (args.currentTick || 0) / 960;
                 
                 const now = performance.now();
@@ -303,21 +377,74 @@
                 
                 const parsed = parseXMLToGraph(xmlString);
                 
+                window.totalBeats = parsed.totalBeats;
+
                 pitchChart.data.datasets[0].data = parsed.data;
                 pitchChart.options.scales.y.min = parsed.yMin;
                 pitchChart.options.scales.y.max = parsed.yMax;
                 
+                pitchChart.options.scales.x.max = Math.ceil(window.totalBeats);
+                
                 pitchChart.update();
                 
-                statusText.innerText = `Score plotted! Detected ${window.beatsPerBar} beats per bar.`;
+                playPauseBtn.disabled = false;
+                recordBtn.disabled = false;
+                
+                statusText.innerText = `Score plotted! Total length: ${window.totalBeats} beats at ${window.currentBPM} BPM.`;
             };
             reader.readAsArrayBuffer(file);
         });
 
-        // --- 4. MICROPHONE RECORDING TRACKING ---
+        // --- 4. MICROPHONE RECORDING & PLAYBACK TRACKING ---
         let audioContext, analyser, microphone;
         let isRecording = false;
         let recordingInterval;
+        
+        let mediaRecorder;
+        let audioChunks = [];
+        let recordedAudio = new Audio();
+        
+        let playbackAnimationId;
+
+        function animatePlaybackCursor() {
+            if (!recordedAudio.paused && !isRecording) {
+                const beatsPerSecond = window.currentBPM / 60;
+                window.currentCursorBeat = recordedAudio.currentTime * beatsPerSecond;
+                pitchChart.update('none');
+                playbackAnimationId = requestAnimationFrame(animatePlaybackCursor);
+            }
+        }
+
+        recordedAudio.addEventListener('play', () => {
+            playRecordingBtn.innerText = '⏸ Pause Recording';
+            window.isCursorActive = true;
+            if (api.playerState === 1) api.pause(); 
+            
+            animatePlaybackCursor();
+        });
+
+        recordedAudio.addEventListener('pause', () => {
+            playRecordingBtn.innerText = '▶ Play Recording';
+            window.isCursorActive = false;
+            cancelAnimationFrame(playbackAnimationId);
+            pitchChart.update('none');
+        });
+
+        recordedAudio.addEventListener('ended', () => {
+            playRecordingBtn.innerText = '▶ Play Recording';
+            window.isCursorActive = false;
+            window.currentCursorBeat = 0;
+            cancelAnimationFrame(playbackAnimationId);
+            pitchChart.update('none');
+        });
+
+        playRecordingBtn.addEventListener('click', () => {
+            if (recordedAudio.paused) {
+                recordedAudio.play();
+            } else {
+                recordedAudio.pause();
+            }
+        });
 
         function autoCorrelate(buf, sampleRate) {
             let SIZE = buf.length;
@@ -353,47 +480,70 @@
 
         async function toggleRecording() {
             if (isRecording) {
-                // STOP RECORDING
                 isRecording = false;
                 window.isCursorActive = false; 
                 
                 clearInterval(recordingInterval);
                 if (microphone) microphone.disconnect();
+                
+                if (mediaRecorder && mediaRecorder.state !== "inactive") {
+                    mediaRecorder.stop();
+                }
+
                 recordBtn.innerText = "🎤 Start Recording";
                 recordBtn.classList.remove("recording");
-                statusText.innerText = "Recording finished. Graph updated.";
+                statusText.innerText = "Recording finished. You can now play it back.";
                 pitchChart.update(); 
                 return;
             }
 
             try {
-                // Request mic stream FIRST so the browser's "Allow Audio" prompt doesn't pause the countdown
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
                 });
 
-                // Initialize audio context right away to ensure strict browser policies (like Safari) are satisfied
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-                // Disable UI temporarily during countdown
                 recordBtn.disabled = true;
                 playPauseBtn.disabled = true;
+                playRecordingBtn.disabled = true; 
                 
                 let countdownBeat = 4;
                 statusText.innerText = `Recording starts in: ${countdownBeat}...`;
                 
-                // 120 BPM = 500 milliseconds per beat
+                countdownOverlay.style.display = 'flex';
+                countdownOverlay.innerText = countdownBeat;
+
+                const msPerBeat = 60000 / window.currentBPM;
+                const beatsPerSecond = window.currentBPM / 60;
+                
                 const countdownTimer = setInterval(() => {
                     countdownBeat--;
                     
                     if (countdownBeat > 0) {
                         statusText.innerText = `Recording starts in: ${countdownBeat}...`;
+                        countdownOverlay.innerText = countdownBeat; 
                     } else {
-                        // COUNTDOWN FINISHED - START ACTUAL RECORDING
                         clearInterval(countdownTimer);
+                        countdownOverlay.style.display = 'none'; 
+                        
                         recordBtn.disabled = false;
                         playPauseBtn.disabled = false;
                         
+                        audioChunks = [];
+                        mediaRecorder = new MediaRecorder(stream);
+                        
+                        mediaRecorder.ondataavailable = event => {
+                            if (event.data.size > 0) audioChunks.push(event.data);
+                        };
+                        
+                        mediaRecorder.onstop = () => {
+                            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' }); 
+                            const audioUrl = URL.createObjectURL(audioBlob);
+                            recordedAudio.src = audioUrl; 
+                            playRecordingBtn.disabled = false; 
+                        };
+
                         analyser = audioContext.createAnalyser();
                         analyser.fftSize = 2048;
                         microphone = audioContext.createMediaStreamSource(stream);
@@ -405,8 +555,9 @@
 
                         recordBtn.innerText = "🛑 Stop Recording";
                         recordBtn.classList.add("recording");
-                        statusText.innerText = "Listening at 10ms rate... Play an instrument!";
+                        statusText.innerText = "Listening... Play along!";
 
+                        mediaRecorder.start();
                         const buffer = new Float32Array(analyser.fftSize);
                         const startAudioTime = audioContext.currentTime;
                         let lastChartUpdate = performance.now();
@@ -418,7 +569,7 @@
                             analyser.getFloatTimeDomainData(buffer);
                             const freq = autoCorrelate(buffer, audioContext.sampleRate);
                             
-                            window.currentCursorBeat = (audioContext.currentTime - startAudioTime) * 2; 
+                            window.currentCursorBeat = (audioContext.currentTime - startAudioTime) * beatsPerSecond; 
                             
                             if (freq !== -1) {
                                 const midiNote = 12 * Math.log2(freq / 440) + 69;
@@ -434,13 +585,18 @@
                                 lastChartUpdate = now;
                             }
 
+                            if (window.totalBeats > 0 && window.currentCursorBeat >= window.totalBeats) {
+                                toggleRecording(); 
+                            }
+
                         }, 10);
                     }
-                }, 500); 
+                }, msPerBeat); 
 
             } catch (err) {
                 console.error("Microphone access denied:", err);
                 statusText.innerText = "Microphone access denied. Please check your browser permissions.";
+                countdownOverlay.style.display = 'none'; 
             }
         }
 
