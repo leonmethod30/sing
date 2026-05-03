@@ -9,47 +9,25 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <style>
-        /* Apply box-sizing globally to prevent mobile overflow */
         *, *:before, *:after {
             box-sizing: border-box;
         }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            margin: 0; 
-            padding: 15px; 
-            background-color: #f0f2f5; 
-            color: #333;
+            margin: 0; padding: 15px; background-color: #f0f2f5; color: #333;
         }
-        .container { 
-            max-width: 1000px; 
-            margin: 0 auto; 
-            width: 100%;
-        }
+        .container { max-width: 1000px; margin: 0 auto; width: 100%; }
         .toolbar {
-            background: #ffffff; 
-            padding: 15px; 
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05); 
-            margin-bottom: 20px;
-            display: flex; 
-            gap: 10px; 
-            align-items: center; 
-            flex-wrap: wrap;
+            background: #ffffff; padding: 15px; border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px;
+            display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
         }
         
         button, .btn {
-            padding: 10px 15px; 
-            font-size: 14px; 
-            font-weight: 600; 
-            cursor: pointer;
-            background-color: #0056b3; 
-            color: white; 
-            border: none; 
-            border-radius: 6px;
-            display: inline-block;
-            text-align: center;
-            flex-grow: 1; /* Helps buttons fill available space evenly on mobile */
+            padding: 10px 15px; font-size: 14px; font-weight: 600; cursor: pointer;
+            background-color: #0056b3; color: white; border: none; border-radius: 6px;
+            display: inline-block; text-align: center; flex-grow: 1;
         }
         button:hover:not(:disabled), .btn:hover { background-color: #004494; }
         button:disabled { background-color: #a0c4e8; cursor: not-allowed; }
@@ -68,12 +46,8 @@
         }
 
         #status { 
-            font-size: 14px; 
-            color: #666; 
-            font-weight: bold; 
-            width: 100%; /* Forces status to its own line on mobile */
-            text-align: center;
-            margin-top: 5px;
+            font-size: 14px; color: #666; font-weight: bold; width: 100%; 
+            text-align: center; margin-top: 5px;
         }
 
         @media (min-width: 768px) {
@@ -82,33 +56,17 @@
         }
         
         #graph-wrapper { 
-            position: relative; 
-            background: #ffffff; 
-            padding: 15px; 
-            border-radius: 8px; 
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1); 
-            /* Flexible height for mobile, maxed out for desktop */
-            height: 65vh; 
-            min-height: 400px;
-            max-height: 600px;
-            width: 100%;
+            position: relative; background: #ffffff; padding: 15px; border-radius: 8px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1); height: 65vh; min-height: 400px;
+            max-height: 600px; width: 100%;
         }
 
         #countdown-overlay {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
-            display: none; 
-            align-items: center;
-            justify-content: center;
-            /* Dynamically scale the font size based on screen width */
-            font-size: clamp(80px, 20vw, 180px);
-            font-weight: 900;
-            color: #dc3545; 
-            background: rgba(255, 255, 255, 0.75); 
-            text-shadow: 4px 4px 15px rgba(0,0,0,0.2);
-            z-index: 100;
-            pointer-events: none; 
-            border-radius: 8px;
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: none; 
+            align-items: center; justify-content: center; font-size: clamp(80px, 20vw, 180px);
+            font-weight: 900; color: #dc3545; background: rgba(255, 255, 255, 0.75); 
+            text-shadow: 4px 4px 15px rgba(0,0,0,0.2); z-index: 100;
+            pointer-events: none; border-radius: 8px;
         }
 
         #hidden-audio-player { display: none; }
@@ -209,9 +167,7 @@
                 maintainAspectRatio: false,
                 animation: false, 
                 plugins: {
-                    legend: {
-                        display: false
-                    },
+                    legend: { display: false },
                     tooltip: {
                         enabled: true,
                         displayColors: false, 
@@ -233,10 +189,7 @@
                         position: 'bottom',
                         min: 0,
                         title: { display: false }, 
-                        ticks: { 
-                            display: false, 
-                            stepSize: 1 
-                        },
+                        ticks: { display: false, stepSize: 1 },
                         grid: {
                             lineWidth: (context) => {
                                 if (context.tick && context.tick.value % window.beatsPerBar === 0) return 2.5;
@@ -253,11 +206,7 @@
                         min: 36, 
                         max: 96, 
                         title: { display: false }, 
-                        ticks: {
-                            display: false, 
-                            stepSize: 1, 
-                            autoSkip: false
-                        },
+                        ticks: { display: false, stepSize: 1, autoSkip: false },
                         grid: {
                             lineWidth: (context) => {
                                 if (context.tick && context.tick.value % 12 === 0) return 2.5;
@@ -304,7 +253,6 @@
             let currentBeat = 0;
             let maxBeatFound = 0; 
             const graphData = [];
-            
             let minMidiFound = Infinity;
             let maxMidiFound = -Infinity;
 
@@ -350,7 +298,6 @@
             if (minMidiFound !== Infinity && maxMidiFound !== -Infinity) {
                 yMin = minMidiFound - 6;
                 yMax = maxMidiFound + 6; 
-                
                 if (yMin < 0) yMin = 0;
                 if (yMax > 127) yMax = 127;
             }
@@ -429,9 +376,7 @@
                 pitchChart.data.datasets[0].data = parsed.data;
                 pitchChart.options.scales.y.min = parsed.yMin;
                 pitchChart.options.scales.y.max = parsed.yMax;
-                
                 pitchChart.options.scales.x.max = Math.ceil(window.totalBeats);
-                
                 pitchChart.update();
                 
                 playPauseBtn.disabled = false;
@@ -450,7 +395,6 @@
         let mediaRecorder;
         let audioChunks = [];
         let recordedAudio = new Audio();
-        
         let playbackAnimationId;
 
         function animatePlaybackCursor() {
@@ -466,7 +410,6 @@
             playRecordingBtn.innerText = '⏸ Pause Recording';
             window.isCursorActive = true;
             if (api.playerState === 1) api.pause(); 
-            
             animatePlaybackCursor();
         });
 
@@ -493,36 +436,71 @@
             }
         });
 
-        function autoCorrelate(buf, sampleRate) {
-            let SIZE = buf.length;
+        // FIXED: Replaced basic autocorrelation with the highly accurate YIN pitch detection algorithm
+        function pitchYin(buffer, sampleRate) {
+            // First, calculate RMS volume to act as a noise/silence gate
             let rms = 0;
-            for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
-            rms = Math.sqrt(rms / SIZE);
-            if (rms < 0.002) return -1;
+            for (let i = 0; i < buffer.length; i++) {
+                rms += buffer[i] * buffer[i];
+            }
+            rms = Math.sqrt(rms / buffer.length);
+            
+            // If the volume is too low, don't attempt to find a pitch
+            if (rms < 0.005) return -1; 
 
-            let r1 = 0, r2 = SIZE - 1, thres = 0.05;
-            for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buf[i]) < thres) { r1 = i; break; }
-            for (let i = 1; i < SIZE / 2; i++) if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
-            buf = buf.slice(r1, r2);
-            SIZE = buf.length;
+            const halfBufferSize = Math.floor(buffer.length / 2);
+            const yinBuffer = new Float32Array(halfBufferSize);
 
-            let c = new Array(SIZE).fill(0);
-            for (let i = 0; i < SIZE; i++) {
-                for (let j = 0; j < SIZE - i; j++) c[i] = c[i] + buf[j] * buf[j + i];
+            // Step 1: Compute the squared difference function
+            for (let t = 0; t < halfBufferSize; t++) {
+                yinBuffer[t] = 0;
+                for (let i = 0; i < halfBufferSize; i++) {
+                    let delta = buffer[i] - buffer[i + t];
+                    yinBuffer[t] += delta * delta;
+                }
             }
 
-            let d = 0; while (c[d] > c[d + 1]) d++;
-            let maxval = -1, maxpos = -1;
-            for (let i = d; i < SIZE; i++) {
-                if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+            // Step 2: Compute the cumulative mean normalized difference function
+            yinBuffer[0] = 1;
+            let runningSum = 0;
+            for (let t = 1; t < halfBufferSize; t++) {
+                runningSum += yinBuffer[t];
+                yinBuffer[t] = yinBuffer[t] * t / runningSum;
             }
-            let T0 = maxpos;
-            let x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
-            let a = (x1 + x3 - 2 * x2) / 2;
-            let b = (x3 - x1) / 2;
-            if (a) T0 = T0 - b / (2 * a);
 
-            return sampleRate / T0;
+            // Step 3: Absolute thresholding
+            let tau = -1;
+            const threshold = 0.15; // 15% threshold is standard for YIN
+            for (let t = 2; t < halfBufferSize; t++) {
+                if (yinBuffer[t] < threshold) {
+                    // Search forward to find the true local minimum
+                    while (t + 1 < halfBufferSize && yinBuffer[t + 1] < yinBuffer[t]) {
+                        t++;
+                    }
+                    tau = t;
+                    break;
+                }
+            }
+
+            if (tau === -1) {
+                return -1; // Pitch is too ambiguous or noisy
+            }
+
+            // Step 4: Parabolic interpolation for precision
+            let betterTau = tau;
+            if (tau > 0 && tau < halfBufferSize - 1) {
+                let s0 = yinBuffer[tau - 1];
+                let s1 = yinBuffer[tau];
+                let s2 = yinBuffer[tau + 1];
+                
+                // Find the vertex of a parabola passing through the 3 points
+                let adjustment = (s2 - s0) / (2 * (2 * s1 - s2 - s0));
+                if (Math.abs(adjustment) < 1) {
+                    betterTau += adjustment;
+                }
+            }
+
+            return sampleRate / betterTau;
         }
 
         async function toggleRecording() {
@@ -614,7 +592,9 @@
 
                         recordingInterval = setInterval(() => {
                             analyser.getFloatTimeDomainData(buffer);
-                            const freq = autoCorrelate(buffer, audioContext.sampleRate);
+                            
+                            // FIXED: Replaced autoCorrelate with YIN
+                            const freq = pitchYin(buffer, audioContext.sampleRate);
                             
                             window.currentCursorBeat = (audioContext.currentTime - startAudioTime) * beatsPerSecond; 
                             
