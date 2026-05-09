@@ -112,6 +112,10 @@
         window.currentBPM = 120;
 
         const countdownOverlay = document.getElementById('countdown-overlay');
+        
+        // NEW: Background index to cross-reference Graph dots to official AlphaTab objects
+        let alphaTabNotesIndex = [];
+        let currentlyHoveredNoteIndex = null;
 
         function getNoteStringFromMidi(midiValue) {
             const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -177,6 +181,45 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 animation: false, 
+                // NEW: Logic to find the AlphaTab note and play it when hovered
+                onHover: (event, activeElements) => {
+                    if (activeElements.length > 0) {
+                        const element = activeElements[0];
+                        
+                        // Check if we hovered over the blue score
+                        if (element.datasetIndex === 0) {
+                            const index = element.index;
+                            
+                            // Prevent machine-gun restriking when moving mouse along the same note
+                            const noteId = Math.floor(index / 3);
+                            
+                            if (currentlyHoveredNoteIndex !== noteId) {
+                                currentlyHoveredNoteIndex = noteId;
+                                const noteData = pitchChart.data.datasets[0].data[index];
+                                
+                                if (noteData && noteData.y !== null && alphaTabNotesIndex.length > 0) {
+                                    const targetTick = noteData.x * 960;
+                                    const midiPitch = noteData.y;
+                                    
+                                    // 1. Filter out all AlphaTab notes that match our pitch exactly
+                                    const pitchMatches = alphaTabNotesIndex.filter(n => n.pitch === midiPitch);
+                                    
+                                    if (pitchMatches.length > 0) {
+                                        // 2. Find the one that is closest in time to where we hovered
+                                        const bestMatch = pitchMatches.reduce((prev, curr) => 
+                                            Math.abs(curr.tick - targetTick) < Math.abs(prev.tick - targetTick) ? curr : prev
+                                        );
+                                        
+                                        // 3. Play it natively through AlphaTab!
+                                        api.playNote(bestMatch.noteObj);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        currentlyHoveredNoteIndex = null;
+                    }
+                },
                 plugins: {
                     legend: { display: false },
                     tooltip: {
@@ -186,10 +229,9 @@
                             return tooltipItem.datasetIndex === 0;
                         },
                         callbacks: {
-                            // FIXED: Modified tooltip label to show Note + Lyric (without beat)
                             label: function(context) {
                                 const noteStr = getNoteStringFromMidi(context.parsed.y);
-                                const lyricStr = context.raw.lyric; // Accessing custom lyric property
+                                const lyricStr = context.raw.lyric; 
                                 
                                 if (lyricStr) {
                                     return `${noteStr} ${lyricStr}`;
@@ -290,7 +332,6 @@
                     const alterNode = pitchNode[0].getElementsByTagName("alter");
                     if (alterNode.length > 0) alter = parseInt(alterNode[0].textContent);
                     
-                    // FIXED: Extract the lyric text if it exists
                     let lyricText = "";
                     const lyricNodes = note.getElementsByTagName("lyric");
                     if (lyricNodes.length > 0) {
@@ -307,7 +348,6 @@
                     maxMidiFound = Math.max(maxMidiFound, midiNote);
                     maxBeatFound = Math.max(maxBeatFound, currentBeat + lengthInBeats);
 
-                    // Add the extracted lyric to the dataset objects
                     graphData.push({x: currentBeat, y: midiNote, lyric: lyricText});
                     graphData.push({x: currentBeat + lengthInBeats, y: midiNote, lyric: lyricText});
                     graphData.push({x: null, y: null}); 
@@ -349,9 +389,36 @@
         const playRecordingBtn = document.getElementById('play-recording-btn');
         const statusText = document.getElementById('status');
 
-        api.soundFontLoad.on(() => {
+        // NEW: When AlphaTab parses the score natively, index all of its Note objects
+        api.scoreLoaded.on((score) => {
             if (!window.totalBeats) {
                 statusText.innerText = "Audio engine ready. Upload an XML file to begin!";
+            }
+            
+            alphaTabNotesIndex = [];
+            
+            if (score.tracks && score.tracks.length > 0) {
+                const track = score.tracks[0];
+                track.staves.forEach(staff => {
+                    staff.bars.forEach(bar => {
+                        bar.voices.forEach(voice => {
+                            voice.beats.forEach(beat => {
+                                // Extract the relative start tick
+                                const barStart = bar.masterBar ? bar.masterBar.start : 0;
+                                const beatStart = beat.playbackStart || 0;
+                                const absoluteTick = barStart + beatStart;
+                                
+                                beat.notes.forEach(note => {
+                                    alphaTabNotesIndex.push({
+                                        tick: absoluteTick,
+                                        pitch: note.realValue, // In AlphaTab, realValue = MIDI Pitch
+                                        noteObj: note
+                                    });
+                                });
+                            });
+                        });
+                    });
+                });
             }
         });
 
