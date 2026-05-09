@@ -69,6 +69,8 @@
             position: relative; background: #ffffff; padding: 15px; border-radius: 8px; 
             box-shadow: 0 2px 8px rgba(0,0,0,0.1); height: 65vh; min-height: 400px;
             max-height: 600px; width: 100%;
+            /* FIXED: Prevent browser scrolling when swiping inside the graph */
+            touch-action: none; 
         }
 
         #countdown-overlay {
@@ -110,6 +112,11 @@
         window.isCursorActive = false;
         window.totalBeats = 0; 
         window.currentBPM = 120;
+        
+        // NEW: Pagination State Variables
+        window.currentStartBar = 0;
+        window.visibleBars = 4;
+        window.totalBars = 0;
 
         const countdownOverlay = document.getElementById('countdown-overlay');
         
@@ -122,6 +129,38 @@
                 return notes[midiValue % 12] + (Math.floor(midiValue / 12) - 1);
             }
             return '';
+        }
+
+        // NEW: Function to safely update the X-axis bounds
+        function updateChartWindow() {
+            if (window.totalBars <= window.visibleBars) {
+                window.currentStartBar = 0; // If short song, just show from start
+            } else {
+                const maxStartBar = window.totalBars - window.visibleBars;
+                if (window.currentStartBar > maxStartBar) window.currentStartBar = maxStartBar;
+                if (window.currentStartBar < 0) window.currentStartBar = 0;
+            }
+
+            const minBeat = window.currentStartBar * window.beatsPerBar;
+            const maxBeat = (window.currentStartBar + window.visibleBars) * window.beatsPerBar;
+
+            pitchChart.options.scales.x.min = minBeat;
+            pitchChart.options.scales.x.max = maxBeat;
+            pitchChart.update('none');
+        }
+
+        // NEW: Check if the cursor is off-screen and auto-follow
+        function autoFollowCursor() {
+            const maxVisibleBeat = (window.currentStartBar + window.visibleBars) * window.beatsPerBar;
+            const minVisibleBeat = window.currentStartBar * window.beatsPerBar;
+
+            if (window.currentCursorBeat >= maxVisibleBeat) {
+                window.currentStartBar += window.visibleBars; 
+                updateChartWindow();
+            } else if (window.currentCursorBeat < minVisibleBeat) {
+                window.currentStartBar = Math.floor(window.currentCursorBeat / window.beatsPerBar);
+                updateChartWindow();
+            }
         }
 
         // --- 1. GRAPH SETUP & CUSTOM CURSOR PLUGIN ---
@@ -193,7 +232,7 @@
                                 const noteData = pitchChart.data.datasets[0].data[index];
                                 
                                 if (noteData && noteData.y !== null && alphaTabNotesIndex.length > 0) {
-                                    const targetTick = noteData.x * 960; // 960 is the standard AlphaTab ticks-per-quarter
+                                    const targetTick = noteData.x * 960;
                                     const midiPitch = noteData.y;
                                     
                                     const pitchMatches = alphaTabNotesIndex.filter(n => n.pitch === midiPitch);
@@ -239,7 +278,8 @@
                     x: {
                         type: 'linear', 
                         position: 'bottom',
-                        min: 0,
+                        min: 0, 
+                        max: 16, // Will be overridden dynamically
                         title: { display: false }, 
                         ticks: { display: false, stepSize: 1 },
                         grid: {
@@ -273,6 +313,47 @@
                 }
             }
         });
+
+        // --- NEW: SWIPE GESTURE DETECTION ---
+        let touchStartX = 0;
+        let touchStartY = 0;
+        const graphWrapper = document.getElementById('graph-wrapper');
+
+        graphWrapper.addEventListener('touchstart', e => {
+            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
+        }, { passive: true });
+
+        graphWrapper.addEventListener('touchend', e => {
+            const touchEndX = e.changedTouches[0].screenX;
+            const touchEndY = e.changedTouches[0].screenY;
+            
+            const diffX = touchStartX - touchEndX; 
+            const diffY = touchStartY - touchEndY; 
+
+            // Only trigger if swipe is long enough to not be an accidental tap
+            if (Math.abs(diffX) > Math.abs(diffY)) {
+                // Horizontal Swipe (Left/Right)
+                if (Math.abs(diffX) > 40) {
+                    if (diffX > 0) {
+                        window.currentStartBar += 1; // Swiped Left: Next bar
+                    } else {
+                        window.currentStartBar -= 1; // Swiped Right: Prev bar
+                    }
+                    updateChartWindow();
+                }
+            } else {
+                // Vertical Swipe (Up/Down)
+                if (Math.abs(diffY) > 40) {
+                    if (diffY > 0) {
+                        window.currentStartBar += 4; // Swiped Up: Next 4 bars
+                    } else {
+                        window.currentStartBar -= 4; // Swiped Down: Prev 4 bars
+                    }
+                    updateChartWindow();
+                }
+            }
+        }, { passive: true });
 
         // --- 2. MUSICXML CUSTOM PARSER ---
         function parseXMLToGraph(xmlString) {
@@ -394,12 +475,10 @@
                 const track = score.tracks[0];
                 track.staves.forEach(staff => {
                     staff.bars.forEach(bar => {
-                        // FIXED: Safely extract the absolute start tick of the bar
                         const barStart = bar.masterBar ? bar.masterBar.start : (bar.start || 0);
                         
                         bar.voices.forEach(voice => {
                             voice.beats.forEach(beat => {
-                                // FIXED: Add the beat's relative start to get the final, accurate timestamp
                                 const beatStart = beat.start || 0;
                                 const absoluteTick = barStart + beatStart;
                                 
@@ -437,6 +516,9 @@
             if (window.isCursorActive && !isRecording && recordedAudio.paused) {
                 window.currentCursorBeat = (args.currentTick || 0) / 960;
                 
+                // FIXED: Follow cursor during native playback
+                autoFollowCursor();
+                
                 const now = performance.now();
                 if (now - lastPlaybackUpdate > 33) {
                     pitchChart.update('none'); 
@@ -462,18 +544,22 @@
                 const parsed = parseXMLToGraph(xmlString);
                 
                 window.totalBeats = parsed.totalBeats;
+                // FIXED: Calculate the exact number of bars in the song and setup initial window
+                window.totalBars = Math.ceil(window.totalBeats / window.beatsPerBar);
+                window.currentStartBar = 0;
 
                 pitchChart.data.datasets[0].data = parsed.data;
                 pitchChart.options.scales.y.min = parsed.yMin;
                 pitchChart.options.scales.y.max = parsed.yMax;
-                pitchChart.options.scales.x.max = Math.ceil(window.totalBeats);
-                pitchChart.update();
+                
+                // FIXED: Instead of setting max to the end of the song, configure the window
+                updateChartWindow();
                 
                 playPauseBtn.disabled = false;
                 recordBtn.disabled = false;
                 recordWithPianoBtn.disabled = false;
                 
-                statusText.innerText = `Score plotted! Total length: ${window.totalBeats} beats at ${window.currentBPM} BPM.`;
+                statusText.innerText = `Score plotted! Total length: ${window.totalBars} bars.`;
             };
             reader.readAsArrayBuffer(file);
         });
@@ -492,6 +578,10 @@
             if (!recordedAudio.paused && !isRecording) {
                 const beatsPerSecond = window.currentBPM / 60;
                 window.currentCursorBeat = recordedAudio.currentTime * beatsPerSecond;
+                
+                // FIXED: Follow cursor during recording playback
+                autoFollowCursor();
+                
                 pitchChart.update('none');
                 playbackAnimationId = requestAnimationFrame(animatePlaybackCursor);
             }
@@ -515,6 +605,8 @@
             playRecordingBtn.innerText = '▶ Play Recording';
             window.isCursorActive = false;
             window.currentCursorBeat = 0;
+            window.currentStartBar = 0;
+            updateChartWindow();
             cancelAnimationFrame(playbackAnimationId);
             pitchChart.update('none');
         });
@@ -586,7 +678,10 @@
                 playPauseBtn.disabled = false; 
                 
                 statusText.innerText = "Recording finished. You can now play it back.";
-                pitchChart.update(); 
+                
+                window.currentStartBar = 0;
+                updateChartWindow();
+                
                 return;
             }
 
@@ -596,6 +691,10 @@
                 });
 
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Snap to beginning before recording starts
+                window.currentStartBar = 0;
+                updateChartWindow();
                 
                 if (withPiano) {
                     recordBtn.style.display = 'none';
@@ -678,6 +777,9 @@
                             const freq = autoCorrelate(buffer, audioContext.sampleRate);
                             
                             window.currentCursorBeat = (audioContext.currentTime - startAudioTime) * beatsPerSecond; 
+                            
+                            // FIXED: Follow cursor during live recording
+                            autoFollowCursor();
                             
                             if (freq !== -1) {
                                 const midiNote = 12 * Math.log2(freq / 440) + 69;
