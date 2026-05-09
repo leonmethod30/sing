@@ -437,62 +437,37 @@
             }
         });
 
-        function pitchYin(buffer, sampleRate) {
+        // REVERTED to the classic autocorrelation function
+        function autoCorrelate(buf, sampleRate) {
+            let SIZE = buf.length;
             let rms = 0;
-            for (let i = 0; i < buffer.length; i++) {
-                rms += buffer[i] * buffer[i];
-            }
-            rms = Math.sqrt(rms / buffer.length);
-            
-            if (rms < 0.005) return -1; 
+            for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+            rms = Math.sqrt(rms / SIZE);
+            if (rms < 0.005) return -1; // Noise gate
 
-            const halfBufferSize = Math.floor(buffer.length / 2);
-            const yinBuffer = new Float32Array(halfBufferSize);
+            let r1 = 0, r2 = SIZE - 1, thres = 0.05;
+            for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+            for (let i = 1; i < SIZE / 2; i++) if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+            buf = buf.slice(r1, r2);
+            SIZE = buf.length;
 
-            for (let t = 0; t < halfBufferSize; t++) {
-                yinBuffer[t] = 0;
-                for (let i = 0; i < halfBufferSize; i++) {
-                    let delta = buffer[i] - buffer[i + t];
-                    yinBuffer[t] += delta * delta;
-                }
+            let c = new Array(SIZE).fill(0);
+            for (let i = 0; i < SIZE; i++) {
+                for (let j = 0; j < SIZE - i; j++) c[i] = c[i] + buf[j] * buf[j + i];
             }
 
-            yinBuffer[0] = 1;
-            let runningSum = 0;
-            for (let t = 1; t < halfBufferSize; t++) {
-                runningSum += yinBuffer[t];
-                yinBuffer[t] = yinBuffer[t] * t / runningSum;
+            let d = 0; while (c[d] > c[d + 1]) d++;
+            let maxval = -1, maxpos = -1;
+            for (let i = d; i < SIZE; i++) {
+                if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
             }
+            let T0 = maxpos;
+            let x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+            let a = (x1 + x3 - 2 * x2) / 2;
+            let b = (x3 - x1) / 2;
+            if (a) T0 = T0 - b / (2 * a);
 
-            let tau = -1;
-            const threshold = 0.15; 
-            for (let t = 2; t < halfBufferSize; t++) {
-                if (yinBuffer[t] < threshold) {
-                    while (t + 1 < halfBufferSize && yinBuffer[t + 1] < yinBuffer[t]) {
-                        t++;
-                    }
-                    tau = t;
-                    break;
-                }
-            }
-
-            if (tau === -1) {
-                return -1; 
-            }
-
-            let betterTau = tau;
-            if (tau > 0 && tau < halfBufferSize - 1) {
-                let s0 = yinBuffer[tau - 1];
-                let s1 = yinBuffer[tau];
-                let s2 = yinBuffer[tau + 1];
-                
-                let adjustment = (s2 - s0) / (2 * (2 * s1 - s2 - s0));
-                if (Math.abs(adjustment) < 1) {
-                    betterTau += adjustment;
-                }
-            }
-
-            return sampleRate / betterTau;
+            return sampleRate / T0;
         }
 
         async function toggleRecording() {
@@ -507,12 +482,11 @@
                     mediaRecorder.stop();
                 }
 
-                // FIXED: Stop the AlphaTab backing track when the user stops recording
                 api.stop();
 
                 recordBtn.innerText = "🎤 Start Recording";
                 recordBtn.classList.remove("recording");
-                playPauseBtn.disabled = false; // Re-enable the button
+                playPauseBtn.disabled = false; 
                 
                 statusText.innerText = "Recording finished. You can now play it back.";
                 pitchChart.update(); 
@@ -551,8 +525,6 @@
                         
                         recordBtn.disabled = false;
                         
-                        // FIXED: Do NOT re-enable playPauseBtn here. Keep it locked so the user can't accidentally pause the backing track mid-recording.
-                        
                         audioChunks = [];
                         mediaRecorder = new MediaRecorder(stream);
                         
@@ -580,8 +552,7 @@
                         recordBtn.classList.add("recording");
                         statusText.innerText = "Listening... Play along!";
 
-                        // FIXED: Start the AlphaTab backing track exactly at beat 0
-                        api.stop(); // Ensures it resets to the beginning if it was paused
+                        api.stop(); 
                         api.play();
 
                         mediaRecorder.start();
@@ -595,7 +566,8 @@
                         recordingInterval = setInterval(() => {
                             analyser.getFloatTimeDomainData(buffer);
                             
-                            const freq = pitchYin(buffer, audioContext.sampleRate);
+                            // Re-implemented standard Autocorrelation here
+                            const freq = autoCorrelate(buffer, audioContext.sampleRate);
                             
                             window.currentCursorBeat = (audioContext.currentTime - startAudioTime) * beatsPerSecond; 
                             
@@ -625,7 +597,7 @@
                 console.error("Microphone access denied:", err);
                 statusText.innerText = "Microphone access denied. Please check your browser permissions.";
                 countdownOverlay.style.display = 'none'; 
-                playPauseBtn.disabled = false; // Emergency re-enable if mic fails
+                playPauseBtn.disabled = false; 
             }
         }
 
