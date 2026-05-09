@@ -34,15 +34,26 @@
         
         #record-btn { background-color: #dc3545; }
         #record-btn:hover:not(:disabled) { background-color: #b02a37; }
-        #record-btn.recording { animation: pulse 1.5s infinite; }
+        #record-btn.recording { animation: pulse-red 1.5s infinite; }
+        
+        /* NEW: Purple styling for the "Record with Piano" button */
+        #record-with-piano-btn { background-color: #6f42c1; }
+        #record-with-piano-btn:hover:not(:disabled) { background-color: #5a32a3; }
+        #record-with-piano-btn.recording { animation: pulse-purple 1.5s infinite; }
         
         #play-recording-btn { background-color: #28a745; }
         #play-recording-btn:hover:not(:disabled) { background-color: #218838; }
 
-        @keyframes pulse {
+        @keyframes pulse-red {
             0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
             70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
             100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+        }
+
+        @keyframes pulse-purple {
+            0% { box-shadow: 0 0 0 0 rgba(111, 66, 193, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(111, 66, 193, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(111, 66, 193, 0); }
         }
 
         #status { 
@@ -80,7 +91,8 @@
             <input type="file" id="file-input" accept=".xml,.musicxml" style="display: none;">
             
             <button id="play-pause-btn" disabled>Play Music</button>
-            <button id="record-btn" disabled>🎤 Start Recording</button>
+            <button id="record-btn" disabled>🎤 Record</button>
+            <button id="record-with-piano-btn" disabled>🎹 Record with Piano</button>
             <button id="play-recording-btn" disabled>▶ Play Recording</button>
             <span id="status">Loading audio engine...</span>
         </div>
@@ -318,6 +330,7 @@
         const fileInput = document.getElementById('file-input');
         const playPauseBtn = document.getElementById('play-pause-btn');
         const recordBtn = document.getElementById('record-btn');
+        const recordWithPianoBtn = document.getElementById('record-with-piano-btn');
         const playRecordingBtn = document.getElementById('play-recording-btn');
         const statusText = document.getElementById('status');
 
@@ -330,7 +343,6 @@
         api.playerStateChanged.on((args) => {
             if (args.state === 1) { 
                 playPauseBtn.innerText = 'Pause Music';
-                // Only allow AlphaTab to control the cursor if we aren't currently recording
                 if (!isRecording) window.isCursorActive = true;
                 if (!recordedAudio.paused) recordedAudio.pause();
             } else {
@@ -382,6 +394,7 @@
                 
                 playPauseBtn.disabled = false;
                 recordBtn.disabled = false;
+                recordWithPianoBtn.disabled = false;
                 
                 statusText.innerText = `Score plotted! Total length: ${window.totalBeats} beats at ${window.currentBPM} BPM.`;
             };
@@ -437,13 +450,12 @@
             }
         });
 
-        // REVERTED to the classic autocorrelation function
         function autoCorrelate(buf, sampleRate) {
             let SIZE = buf.length;
             let rms = 0;
             for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
             rms = Math.sqrt(rms / SIZE);
-            if (rms < 0.005) return -1; // Noise gate
+            if (rms < 0.005) return -1; 
 
             let r1 = 0, r2 = SIZE - 1, thres = 0.05;
             for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buf[i]) < thres) { r1 = i; break; }
@@ -470,7 +482,7 @@
             return sampleRate / T0;
         }
 
-        async function toggleRecording() {
+        async function toggleRecording(withPiano = false) {
             if (isRecording) {
                 isRecording = false;
                 window.isCursorActive = false; 
@@ -484,8 +496,17 @@
 
                 api.stop();
 
-                recordBtn.innerText = "🎤 Start Recording";
+                // Restore both buttons
+                recordBtn.innerText = "🎤 Record";
                 recordBtn.classList.remove("recording");
+                recordBtn.style.display = "inline-block";
+                recordBtn.disabled = false;
+
+                recordWithPianoBtn.innerText = "🎹 Record with Piano";
+                recordWithPianoBtn.classList.remove("recording");
+                recordWithPianoBtn.style.display = "inline-block";
+                recordWithPianoBtn.disabled = false;
+
                 playPauseBtn.disabled = false; 
                 
                 statusText.innerText = "Recording finished. You can now play it back.";
@@ -500,7 +521,19 @@
 
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
+                // Hide the button that wasn't clicked, transform the clicked one
+                if (withPiano) {
+                    recordBtn.style.display = 'none';
+                    recordWithPianoBtn.innerText = "🛑 Stop Recording";
+                    recordWithPianoBtn.classList.add("recording");
+                } else {
+                    recordWithPianoBtn.style.display = 'none';
+                    recordBtn.innerText = "🛑 Stop Recording";
+                    recordBtn.classList.add("recording");
+                }
+
                 recordBtn.disabled = true;
+                recordWithPianoBtn.disabled = true;
                 playPauseBtn.disabled = true;
                 playRecordingBtn.disabled = true; 
                 
@@ -523,7 +556,9 @@
                         clearInterval(countdownTimer);
                         countdownOverlay.style.display = 'none'; 
                         
-                        recordBtn.disabled = false;
+                        // Enable the stop functionality on whichever button is active
+                        if (withPiano) recordWithPianoBtn.disabled = false;
+                        else recordBtn.disabled = false;
                         
                         audioChunks = [];
                         mediaRecorder = new MediaRecorder(stream);
@@ -548,12 +583,13 @@
                         isRecording = true;
                         window.isCursorActive = true; 
 
-                        recordBtn.innerText = "🛑 Stop Recording";
-                        recordBtn.classList.add("recording");
                         statusText.innerText = "Listening... Play along!";
 
+                        // Conditionally play the piano
                         api.stop(); 
-                        api.play();
+                        if (withPiano) {
+                            api.play();
+                        }
 
                         mediaRecorder.start();
                         const buffer = new Float32Array(analyser.fftSize);
@@ -566,7 +602,6 @@
                         recordingInterval = setInterval(() => {
                             analyser.getFloatTimeDomainData(buffer);
                             
-                            // Re-implemented standard Autocorrelation here
                             const freq = autoCorrelate(buffer, audioContext.sampleRate);
                             
                             window.currentCursorBeat = (audioContext.currentTime - startAudioTime) * beatsPerSecond; 
@@ -597,11 +632,20 @@
                 console.error("Microphone access denied:", err);
                 statusText.innerText = "Microphone access denied. Please check your browser permissions.";
                 countdownOverlay.style.display = 'none'; 
+                
+                // Reset UI on failure
+                recordBtn.style.display = "inline-block";
+                recordBtn.disabled = false;
+                recordWithPianoBtn.style.display = "inline-block";
+                recordWithPianoBtn.disabled = false;
                 playPauseBtn.disabled = false; 
             }
         }
 
-        recordBtn.addEventListener('click', toggleRecording);
+        // Attach event listeners to pass the correct boolean flag
+        recordBtn.addEventListener('click', () => toggleRecording(false));
+        recordWithPianoBtn.addEventListener('click', () => toggleRecording(true));
+
     </script>
 </body>
 </html>
