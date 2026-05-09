@@ -282,7 +282,18 @@
                         min: 0, 
                         max: 16, 
                         title: { display: false }, 
-                        ticks: { display: false, stepSize: 1 },
+                        ticks: { 
+                            display: true,     // FIXED: Enable tick text
+                            stepSize: 1, 
+                            autoSkip: false,
+                            callback: function(value) {
+                                // FIXED: Display label only on the start of a bar
+                                if (value % window.beatsPerBar === 0) {
+                                    return (value / window.beatsPerBar) + 1;
+                                }
+                                return '';     // Keeps the gridline but hides the text for intermediate beats
+                            }
+                        },
                         grid: {
                             lineWidth: (context) => {
                                 if (context.tick && context.tick.value % window.beatsPerBar === 0) return 2.5;
@@ -368,7 +379,7 @@
         // 3. Keyboard Arrow Events
         document.addEventListener('keydown', e => {
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-                e.preventDefault(); // Stop default scroll behavior
+                e.preventDefault(); 
                 
                 if (e.key === 'ArrowRight') window.currentStartBar += 1;
                 else if (e.key === 'ArrowLeft') window.currentStartBar -= 1;
