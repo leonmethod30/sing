@@ -330,7 +330,8 @@
         api.playerStateChanged.on((args) => {
             if (args.state === 1) { 
                 playPauseBtn.innerText = 'Pause Music';
-                window.isCursorActive = true;
+                // Only allow AlphaTab to control the cursor if we aren't currently recording
+                if (!isRecording) window.isCursorActive = true;
                 if (!recordedAudio.paused) recordedAudio.pause();
             } else {
                 playPauseBtn.innerText = 'Play Music';
@@ -436,22 +437,18 @@
             }
         });
 
-        // FIXED: Replaced basic autocorrelation with the highly accurate YIN pitch detection algorithm
         function pitchYin(buffer, sampleRate) {
-            // First, calculate RMS volume to act as a noise/silence gate
             let rms = 0;
             for (let i = 0; i < buffer.length; i++) {
                 rms += buffer[i] * buffer[i];
             }
             rms = Math.sqrt(rms / buffer.length);
             
-            // If the volume is too low, don't attempt to find a pitch
             if (rms < 0.005) return -1; 
 
             const halfBufferSize = Math.floor(buffer.length / 2);
             const yinBuffer = new Float32Array(halfBufferSize);
 
-            // Step 1: Compute the squared difference function
             for (let t = 0; t < halfBufferSize; t++) {
                 yinBuffer[t] = 0;
                 for (let i = 0; i < halfBufferSize; i++) {
@@ -460,7 +457,6 @@
                 }
             }
 
-            // Step 2: Compute the cumulative mean normalized difference function
             yinBuffer[0] = 1;
             let runningSum = 0;
             for (let t = 1; t < halfBufferSize; t++) {
@@ -468,12 +464,10 @@
                 yinBuffer[t] = yinBuffer[t] * t / runningSum;
             }
 
-            // Step 3: Absolute thresholding
             let tau = -1;
-            const threshold = 0.15; // 15% threshold is standard for YIN
+            const threshold = 0.15; 
             for (let t = 2; t < halfBufferSize; t++) {
                 if (yinBuffer[t] < threshold) {
-                    // Search forward to find the true local minimum
                     while (t + 1 < halfBufferSize && yinBuffer[t + 1] < yinBuffer[t]) {
                         t++;
                     }
@@ -483,17 +477,15 @@
             }
 
             if (tau === -1) {
-                return -1; // Pitch is too ambiguous or noisy
+                return -1; 
             }
 
-            // Step 4: Parabolic interpolation for precision
             let betterTau = tau;
             if (tau > 0 && tau < halfBufferSize - 1) {
                 let s0 = yinBuffer[tau - 1];
                 let s1 = yinBuffer[tau];
                 let s2 = yinBuffer[tau + 1];
                 
-                // Find the vertex of a parabola passing through the 3 points
                 let adjustment = (s2 - s0) / (2 * (2 * s1 - s2 - s0));
                 if (Math.abs(adjustment) < 1) {
                     betterTau += adjustment;
@@ -515,8 +507,13 @@
                     mediaRecorder.stop();
                 }
 
+                // FIXED: Stop the AlphaTab backing track when the user stops recording
+                api.stop();
+
                 recordBtn.innerText = "🎤 Start Recording";
                 recordBtn.classList.remove("recording");
+                playPauseBtn.disabled = false; // Re-enable the button
+                
                 statusText.innerText = "Recording finished. You can now play it back.";
                 pitchChart.update(); 
                 return;
@@ -553,7 +550,8 @@
                         countdownOverlay.style.display = 'none'; 
                         
                         recordBtn.disabled = false;
-                        playPauseBtn.disabled = false;
+                        
+                        // FIXED: Do NOT re-enable playPauseBtn here. Keep it locked so the user can't accidentally pause the backing track mid-recording.
                         
                         audioChunks = [];
                         mediaRecorder = new MediaRecorder(stream);
@@ -582,6 +580,10 @@
                         recordBtn.classList.add("recording");
                         statusText.innerText = "Listening... Play along!";
 
+                        // FIXED: Start the AlphaTab backing track exactly at beat 0
+                        api.stop(); // Ensures it resets to the beginning if it was paused
+                        api.play();
+
                         mediaRecorder.start();
                         const buffer = new Float32Array(analyser.fftSize);
                         const startAudioTime = audioContext.currentTime;
@@ -593,7 +595,6 @@
                         recordingInterval = setInterval(() => {
                             analyser.getFloatTimeDomainData(buffer);
                             
-                            // FIXED: Replaced autoCorrelate with YIN
                             const freq = pitchYin(buffer, audioContext.sampleRate);
                             
                             window.currentCursorBeat = (audioContext.currentTime - startAudioTime) * beatsPerSecond; 
@@ -624,6 +625,7 @@
                 console.error("Microphone access denied:", err);
                 statusText.innerText = "Microphone access denied. Please check your browser permissions.";
                 countdownOverlay.style.display = 'none'; 
+                playPauseBtn.disabled = false; // Emergency re-enable if mic fails
             }
         }
 
