@@ -43,6 +43,16 @@
         #play-recording-btn { background-color: #28a745; }
         #play-recording-btn:hover:not(:disabled) { background-color: #218838; }
 
+        /* NEW: Styling for the Bar constraints UI */
+        .bar-controls {
+            display: flex; gap: 8px; align-items: center; font-size: 14px; font-weight: 600;
+            background: #f8f9fa; padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd;
+        }
+        .bar-controls input { 
+            width: 55px; padding: 4px; text-align: center; 
+            border: 1px solid #ccc; border-radius: 4px; font-weight: bold;
+        }
+
         @keyframes pulse-red {
             0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
             70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
@@ -99,6 +109,14 @@
             <button id="record-btn" disabled>🎤 Record</button>
             <button id="record-with-piano-btn" disabled>🎹 Record with Piano</button>
             <button id="play-recording-btn" disabled>▶ Play Recording</button>
+            
+            <div class="bar-controls">
+                <label>Bars</label>
+                <input type="number" id="start-bar-input" value="1" min="1" disabled>
+                <span>to</span>
+                <input type="number" id="end-bar-input" value="1" min="1" disabled>
+            </div>
+
             <span id="status">Loading audio engine...</span>
         </div>
 
@@ -117,14 +135,50 @@
         window.totalBeats = 0; 
         window.currentBPM = 120;
         
+        // Pagination & Looping State Variables
         window.currentStartBar = 0;
         window.visibleBars = 4;
         window.totalBars = 0;
+        
+        // NEW: Loop bounds variables
+        window.loopStartBar = 1;
+        window.loopEndBar = 1;
 
         const countdownOverlay = document.getElementById('countdown-overlay');
+        const startBarInput = document.getElementById('start-bar-input');
+        const endBarInput = document.getElementById('end-bar-input');
         
         let alphaTabNotesIndex = [];
         let currentlyHoveredNoteIndex = null;
+
+        // NEW: Synchronize and validate input fields
+        function syncBarInputs() {
+            let s = parseInt(startBarInput.value);
+            let e = parseInt(endBarInput.value);
+            
+            if (isNaN(s) || s < 1) s = 1;
+            if (isNaN(e) || e < 1) e = 1;
+            
+            if (window.totalBars > 0) {
+                if (s > window.totalBars) s = window.totalBars;
+                if (e > window.totalBars) e = window.totalBars;
+            }
+            
+            // Constrain start to not exceed end
+            if (s > e) s = e; 
+            
+            startBarInput.value = s;
+            endBarInput.value = e;
+            window.loopStartBar = s;
+            window.loopEndBar = e;
+            
+            // Auto-pan the window to the start of the loop
+            window.currentStartBar = s - 1;
+            updateChartWindow();
+        }
+
+        startBarInput.addEventListener('change', syncBarInputs);
+        endBarInput.addEventListener('change', syncBarInputs);
 
         function getNoteStringFromMidi(midiValue) {
             const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -164,7 +218,7 @@
             }
         }
 
-        // --- 1. GRAPH SETUP & CUSTOM CURSOR PLUGIN ---
+        // --- 1. GRAPH SETUP & CUSTOM PLUGINS ---
         const verticalCursorPlugin = {
             id: 'verticalCursor',
             afterDraw: (chart) => {
@@ -189,10 +243,47 @@
             }
         };
 
+        // NEW: Plugin to gray out out-of-bound bars
+        const regionShadingPlugin = {
+            id: 'regionShading',
+            beforeDraw: (chart) => {
+                if (!window.totalBars) return;
+                const ctx = chart.ctx;
+                const xAxis = chart.scales.x;
+                const yAxis = chart.scales.y;
+
+                const startBeat = (window.loopStartBar - 1) * window.beatsPerBar;
+                const endBeat = window.loopEndBar * window.beatsPerBar;
+
+                ctx.save();
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.08)'; // Transparent Gray
+
+                // Gray out anything to the left of Start Bar
+                if (startBeat > xAxis.min) {
+                    const startPx = Math.max(xAxis.left, xAxis.getPixelForValue(xAxis.min));
+                    const endPx = Math.min(xAxis.right, xAxis.getPixelForValue(startBeat));
+                    if (endPx > startPx) {
+                        ctx.fillRect(startPx, yAxis.top, endPx - startPx, yAxis.bottom - yAxis.top);
+                    }
+                }
+
+                // Gray out anything to the right of End Bar
+                if (endBeat < xAxis.max) {
+                    const startPx = Math.max(xAxis.left, xAxis.getPixelForValue(endBeat));
+                    const endPx = Math.min(xAxis.right, xAxis.getPixelForValue(xAxis.max));
+                    if (endPx > startPx) {
+                        ctx.fillRect(startPx, yAxis.top, endPx - startPx, yAxis.bottom - yAxis.top);
+                    }
+                }
+
+                ctx.restore();
+            }
+        };
+
         const ctx = document.getElementById('pitchChart').getContext('2d');
         const pitchChart = new Chart(ctx, {
             type: 'scatter',
-            plugins: [verticalCursorPlugin], 
+            plugins: [verticalCursorPlugin, regionShadingPlugin], // ADDED shading plugin
             data: {
                 datasets: [
                     {
@@ -283,15 +374,14 @@
                         max: 16, 
                         title: { display: false }, 
                         ticks: { 
-                            display: true,     // FIXED: Enable tick text
+                            display: true,     
                             stepSize: 1, 
                             autoSkip: false,
                             callback: function(value) {
-                                // FIXED: Display label only on the start of a bar
                                 if (value % window.beatsPerBar === 0) {
                                     return (value / window.beatsPerBar) + 1;
                                 }
-                                return '';     // Keeps the gridline but hides the text for intermediate beats
+                                return '';    
                             }
                         },
                         grid: {
@@ -326,7 +416,7 @@
             }
         });
 
-        // --- NEW: UNIFIED SWIPE & KEYBOARD NAVIGATION ---
+        // --- SWIPE & KEYBOARD NAVIGATION ---
         let dragStartX = 0;
         let dragStartY = 0;
         let isDragging = false;
@@ -337,14 +427,12 @@
             const diffY = startY - endY; 
 
             if (Math.abs(diffX) > Math.abs(diffY)) {
-                // Horizontal (Left/Right)
                 if (Math.abs(diffX) > 40) {
                     if (diffX > 0) window.currentStartBar += 1;
                     else window.currentStartBar -= 1; 
                     updateChartWindow();
                 }
             } else {
-                // Vertical (Up/Down)
                 if (Math.abs(diffY) > 40) {
                     if (diffY > 0) window.currentStartBar += 4; 
                     else window.currentStartBar -= 4;
@@ -353,7 +441,6 @@
             }
         }
 
-        // 1. Touch Events
         graphWrapper.addEventListener('touchstart', e => {
             dragStartX = e.changedTouches[0].screenX;
             dragStartY = e.changedTouches[0].screenY;
@@ -363,7 +450,6 @@
             handleSwipe(dragStartX, dragStartY, e.changedTouches[0].screenX, e.changedTouches[0].screenY);
         }, { passive: true });
 
-        // 2. Mouse Drag Events
         graphWrapper.addEventListener('mousedown', e => {
             isDragging = true;
             dragStartX = e.clientX;
@@ -376,7 +462,6 @@
             handleSwipe(dragStartX, dragStartY, e.clientX, e.clientY);
         });
 
-        // 3. Keyboard Arrow Events
         document.addEventListener('keydown', e => {
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
                 e.preventDefault(); 
@@ -551,6 +636,13 @@
             if (window.isCursorActive && !isRecording && recordedAudio.paused) {
                 window.currentCursorBeat = (args.currentTick || 0) / 960;
                 
+                // FIXED: Enforce playback constraint
+                const endBeat = window.loopEndBar * window.beatsPerBar;
+                if (window.currentCursorBeat >= endBeat) {
+                    api.pause();
+                    window.currentCursorBeat = (window.loopStartBar - 1) * window.beatsPerBar;
+                }
+                
                 autoFollowCursor();
                 
                 const now = performance.now();
@@ -561,7 +653,21 @@
             }
         });
 
-        playPauseBtn.addEventListener('click', () => api.playPause());
+        playPauseBtn.addEventListener('click', () => {
+            if (api.playerState === 1) {
+                api.pause();
+            } else {
+                // FIXED: Force start from correct position if out of bounds
+                const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
+                const endBeat = window.loopEndBar * window.beatsPerBar;
+                
+                if (window.currentCursorBeat < startOffsetBeats || window.currentCursorBeat >= endBeat) {
+                    api.tickPosition = startOffsetBeats * 960;
+                    window.currentCursorBeat = startOffsetBeats;
+                }
+                api.play();
+            }
+        });
 
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
@@ -579,6 +685,19 @@
                 
                 window.totalBeats = parsed.totalBeats;
                 window.totalBars = Math.ceil(window.totalBeats / window.beatsPerBar);
+                
+                // Set constraints based on file bounds
+                window.loopStartBar = 1;
+                window.loopEndBar = window.totalBars;
+                
+                // Update inputs
+                startBarInput.max = window.totalBars;
+                endBarInput.max = window.totalBars;
+                startBarInput.value = 1;
+                endBarInput.value = window.totalBars;
+                startBarInput.disabled = false;
+                endBarInput.disabled = false;
+                
                 window.currentStartBar = 0;
 
                 pitchChart.data.datasets[0].data = parsed.data;
@@ -609,12 +728,24 @@
         function animatePlaybackCursor() {
             if (!recordedAudio.paused && !isRecording) {
                 const beatsPerSecond = window.currentBPM / 60;
-                window.currentCursorBeat = recordedAudio.currentTime * beatsPerSecond;
+                // Offset playback based on what region was recorded
+                const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
+                window.currentCursorBeat = startOffsetBeats + recordedAudio.currentTime * beatsPerSecond;
+                
+                // Stop constraints
+                const endBeat = window.loopEndBar * window.beatsPerBar;
+                if (window.currentCursorBeat >= endBeat) {
+                    recordedAudio.pause();
+                    recordedAudio.currentTime = 0;
+                    window.currentCursorBeat = startOffsetBeats;
+                }
                 
                 autoFollowCursor();
-                
                 pitchChart.update('none');
-                playbackAnimationId = requestAnimationFrame(animatePlaybackCursor);
+                
+                if (!recordedAudio.paused) {
+                    playbackAnimationId = requestAnimationFrame(animatePlaybackCursor);
+                }
             }
         }
 
@@ -635,8 +766,8 @@
         recordedAudio.addEventListener('ended', () => {
             playRecordingBtn.innerText = '▶ Play Recording';
             window.isCursorActive = false;
-            window.currentCursorBeat = 0;
-            window.currentStartBar = 0;
+            window.currentCursorBeat = (window.loopStartBar - 1) * window.beatsPerBar;
+            window.currentStartBar = window.loopStartBar - 1;
             updateChartWindow();
             cancelAnimationFrame(playbackAnimationId);
             pitchChart.update('none');
@@ -644,6 +775,17 @@
 
         playRecordingBtn.addEventListener('click', () => {
             if (recordedAudio.paused) {
+                const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
+                const endBeat = window.loopEndBar * window.beatsPerBar;
+                
+                // Map current play position cleanly
+                if (window.currentCursorBeat < startOffsetBeats || window.currentCursorBeat >= endBeat) {
+                    recordedAudio.currentTime = 0;
+                    window.currentCursorBeat = startOffsetBeats;
+                } else {
+                    const beatsPerSecond = window.currentBPM / 60;
+                    recordedAudio.currentTime = (window.currentCursorBeat - startOffsetBeats) / beatsPerSecond;
+                }
                 recordedAudio.play();
             } else {
                 recordedAudio.pause();
@@ -710,7 +852,7 @@
                 
                 statusText.innerText = "Recording finished. You can now play it back.";
                 
-                window.currentStartBar = 0;
+                window.currentStartBar = window.loopStartBar - 1;
                 updateChartWindow();
                 
                 return;
@@ -723,7 +865,12 @@
 
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-                window.currentStartBar = 0;
+                const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
+                const endBeat = window.loopEndBar * window.beatsPerBar;
+
+                // Sync UI and chart to start position
+                window.currentCursorBeat = startOffsetBeats;
+                window.currentStartBar = window.loopStartBar - 1;
                 updateChartWindow();
                 
                 if (withPiano) {
@@ -789,6 +936,8 @@
                         statusText.innerText = "Listening... Play along!";
 
                         api.stop(); 
+                        api.tickPosition = startOffsetBeats * 960;
+                        
                         if (withPiano) {
                             api.play();
                         }
@@ -806,7 +955,7 @@
                             
                             const freq = autoCorrelate(buffer, audioContext.sampleRate);
                             
-                            window.currentCursorBeat = (audioContext.currentTime - startAudioTime) * beatsPerSecond; 
+                            window.currentCursorBeat = startOffsetBeats + ((audioContext.currentTime - startAudioTime) * beatsPerSecond); 
                             
                             autoFollowCursor();
                             
@@ -824,7 +973,8 @@
                                 lastChartUpdate = now;
                             }
 
-                            if (window.totalBeats > 0 && window.currentCursorBeat >= window.totalBeats) {
+                            // FIXED: Stop recording automatically when the loop end is reached
+                            if (window.currentCursorBeat >= endBeat) {
                                 toggleRecording(); 
                             }
 
