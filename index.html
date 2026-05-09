@@ -36,7 +36,6 @@
         #record-btn:hover:not(:disabled) { background-color: #b02a37; }
         #record-btn.recording { animation: pulse-red 1.5s infinite; }
         
-        /* NEW: Purple styling for the "Record with Piano" button */
         #record-with-piano-btn { background-color: #6f42c1; }
         #record-with-piano-btn:hover:not(:disabled) { background-color: #5a32a3; }
         #record-with-piano-btn.recording { animation: pulse-purple 1.5s infinite; }
@@ -187,10 +186,15 @@
                             return tooltipItem.datasetIndex === 0;
                         },
                         callbacks: {
+                            // FIXED: Modified tooltip label to show Note + Lyric (without beat)
                             label: function(context) {
-                                const beatStr = context.parsed.x.toFixed(2);
                                 const noteStr = getNoteStringFromMidi(context.parsed.y);
-                                return `Beat: ${beatStr} | Note: ${noteStr}`;
+                                const lyricStr = context.raw.lyric; // Accessing custom lyric property
+                                
+                                if (lyricStr) {
+                                    return `${noteStr} ${lyricStr}`;
+                                }
+                                return noteStr;
                             }
                         }
                     }
@@ -285,6 +289,16 @@
                     let alter = 0;
                     const alterNode = pitchNode[0].getElementsByTagName("alter");
                     if (alterNode.length > 0) alter = parseInt(alterNode[0].textContent);
+                    
+                    // FIXED: Extract the lyric text if it exists
+                    let lyricText = "";
+                    const lyricNodes = note.getElementsByTagName("lyric");
+                    if (lyricNodes.length > 0) {
+                        const textNodes = lyricNodes[0].getElementsByTagName("text");
+                        if (textNodes.length > 0) {
+                            lyricText = textNodes[0].textContent;
+                        }
+                    }
 
                     const stepMap = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
                     const midiNote = stepMap[step] + alter + (octave + 1) * 12;
@@ -293,8 +307,9 @@
                     maxMidiFound = Math.max(maxMidiFound, midiNote);
                     maxBeatFound = Math.max(maxBeatFound, currentBeat + lengthInBeats);
 
-                    graphData.push({x: currentBeat, y: midiNote});
-                    graphData.push({x: currentBeat + lengthInBeats, y: midiNote});
+                    // Add the extracted lyric to the dataset objects
+                    graphData.push({x: currentBeat, y: midiNote, lyric: lyricText});
+                    graphData.push({x: currentBeat + lengthInBeats, y: midiNote, lyric: lyricText});
                     graphData.push({x: null, y: null}); 
                 }
                 
@@ -496,7 +511,6 @@
 
                 api.stop();
 
-                // Restore both buttons
                 recordBtn.innerText = "🎤 Record";
                 recordBtn.classList.remove("recording");
                 recordBtn.style.display = "inline-block";
@@ -521,7 +535,6 @@
 
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-                // Hide the button that wasn't clicked, transform the clicked one
                 if (withPiano) {
                     recordBtn.style.display = 'none';
                     recordWithPianoBtn.innerText = "🛑 Stop Recording";
@@ -556,7 +569,6 @@
                         clearInterval(countdownTimer);
                         countdownOverlay.style.display = 'none'; 
                         
-                        // Enable the stop functionality on whichever button is active
                         if (withPiano) recordWithPianoBtn.disabled = false;
                         else recordBtn.disabled = false;
                         
@@ -585,7 +597,6 @@
 
                         statusText.innerText = "Listening... Play along!";
 
-                        // Conditionally play the piano
                         api.stop(); 
                         if (withPiano) {
                             api.play();
@@ -633,7 +644,6 @@
                 statusText.innerText = "Microphone access denied. Please check your browser permissions.";
                 countdownOverlay.style.display = 'none'; 
                 
-                // Reset UI on failure
                 recordBtn.style.display = "inline-block";
                 recordBtn.disabled = false;
                 recordWithPianoBtn.style.display = "inline-block";
@@ -642,7 +652,6 @@
             }
         }
 
-        // Attach event listeners to pass the correct boolean flag
         recordBtn.addEventListener('click', () => toggleRecording(false));
         recordWithPianoBtn.addEventListener('click', () => toggleRecording(true));
 
