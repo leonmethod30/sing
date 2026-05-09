@@ -184,7 +184,6 @@
                     if (activeElements.length > 0) {
                         const element = activeElements[0];
                         
-                        // FIXED: Check that we are on dataset 0 AND that the hovered point is the "start dot" (index % 3 === 0)
                         if (element.datasetIndex === 0 && element.index % 3 === 0) {
                             const index = element.index;
                             const noteId = Math.floor(index / 3);
@@ -194,7 +193,7 @@
                                 const noteData = pitchChart.data.datasets[0].data[index];
                                 
                                 if (noteData && noteData.y !== null && alphaTabNotesIndex.length > 0) {
-                                    const targetTick = noteData.x * 960;
+                                    const targetTick = noteData.x * 960; // 960 is the standard AlphaTab ticks-per-quarter
                                     const midiPitch = noteData.y;
                                     
                                     const pitchMatches = alphaTabNotesIndex.filter(n => n.pitch === midiPitch);
@@ -209,7 +208,6 @@
                                 }
                             }
                         } else {
-                            // If we hover over an end dot (index % 3 === 1), reset the hover state
                             currentlyHoveredNoteIndex = null;
                         }
                     } else {
@@ -222,7 +220,6 @@
                         enabled: true,
                         displayColors: false, 
                         filter: function(tooltipItem) {
-                            // FIXED: Only display tooltip if it's dataset 0 AND it's a "start dot"
                             return tooltipItem.datasetIndex === 0 && tooltipItem.dataIndex % 3 === 0;
                         },
                         callbacks: {
@@ -345,11 +342,8 @@
                     maxMidiFound = Math.max(maxMidiFound, midiNote);
                     maxBeatFound = Math.max(maxBeatFound, currentBeat + lengthInBeats);
 
-                    // Start dot (index % 3 === 0)
                     graphData.push({x: currentBeat, y: midiNote, lyric: lyricText});
-                    // End dot (index % 3 === 1)
                     graphData.push({x: currentBeat + lengthInBeats, y: midiNote, lyric: lyricText});
-                    // Line Break (index % 3 === 2)
                     graphData.push({x: null, y: null}); 
                 }
                 
@@ -400,10 +394,13 @@
                 const track = score.tracks[0];
                 track.staves.forEach(staff => {
                     staff.bars.forEach(bar => {
+                        // FIXED: Safely extract the absolute start tick of the bar
+                        const barStart = bar.masterBar ? bar.masterBar.start : (bar.start || 0);
+                        
                         bar.voices.forEach(voice => {
                             voice.beats.forEach(beat => {
-                                const barStart = bar.masterBar ? bar.masterBar.start : 0;
-                                const beatStart = beat.playbackStart || 0;
+                                // FIXED: Add the beat's relative start to get the final, accurate timestamp
+                                const beatStart = beat.start || 0;
                                 const absoluteTick = barStart + beatStart;
                                 
                                 beat.notes.forEach(note => {
