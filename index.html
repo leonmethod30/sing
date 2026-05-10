@@ -156,7 +156,6 @@
         window.totalBeats = 0; 
         window.currentBPM = 120;
         
-        // Multi-Part Global State
         window.globalXmlString = null;
         let currentTrackIndex = 0;
         
@@ -173,9 +172,6 @@
         const lyricsCheckbox = document.getElementById('lyrics-checkbox');
         const playPauseBtn = document.getElementById('play-pause-btn');
         const partSelect = document.getElementById('part-select');
-        
-        let alphaTabNotesIndex = [];
-        let currentlyHoveredNoteIndex = null;
 
         lyricsCheckbox.addEventListener('change', () => {
             pitchChart.update('none');
@@ -358,7 +354,12 @@
                         borderColor: '#0056b3',
                         backgroundColor: '#0056b3',
                         showLine: true,
-                        pointRadius: (context) => context.dataIndex % 3 === 0 ? 2 : 0,
+                        pointRadius: (context) => {
+                            if (context.type === 'data') {
+                                return context.dataIndex % 3 === 0 ? 2 : 0;
+                            }
+                            return 0;
+                        },
                         pointHitRadius: 10, 
                         borderWidth: 4,
                         spanGaps: false 
@@ -377,39 +378,10 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 animation: false, 
-                onHover: (event, activeElements) => {
-                    if (activeElements.length > 0) {
-                        const element = activeElements[0];
-                        
-                        if (element.datasetIndex === 0 && element.index % 3 === 0) {
-                            const index = element.index;
-                            const noteId = Math.floor(index / 3);
-                            
-                            if (currentlyHoveredNoteIndex !== noteId) {
-                                currentlyHoveredNoteIndex = noteId;
-                                const noteData = pitchChart.data.datasets[0].data[index];
-                                
-                                if (noteData && noteData.y !== null && alphaTabNotesIndex.length > 0) {
-                                    const targetTick = noteData.x * 960;
-                                    const midiPitch = noteData.y;
-                                    
-                                    const pitchMatches = alphaTabNotesIndex.filter(n => n.pitch === midiPitch);
-                                    
-                                    if (pitchMatches.length > 0) {
-                                        const bestMatch = pitchMatches.reduce((prev, curr) => 
-                                            Math.abs(curr.tick - targetTick) < Math.abs(prev.tick - targetTick) ? curr : prev
-                                        );
-                                        
-                                        api.playNote(bestMatch.noteObj);
-                                    }
-                                }
-                            }
-                        } else {
-                            currentlyHoveredNoteIndex = null;
-                        }
-                    } else {
-                        currentlyHoveredNoteIndex = null;
-                    }
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'xy',
+                    intersect: true
                 },
                 plugins: {
                     legend: { display: false },
@@ -542,8 +514,6 @@
         });
 
         // --- 2. MUSICXML CUSTOM PARSER ---
-        
-        // NEW: Function to extract the available parts for the dropdown
         function extractParts(xmlString) {
             const parser = new DOMParser();
             const xmlDoc = parser.parseFromString(xmlString, "text/xml");
@@ -562,7 +532,6 @@
             return parts;
         }
 
-        // FIXED: Parse only the explicitly selected target part
         function parseXMLToGraph(xmlString, targetPartId) {
             const parser = new DOMParser();
             const xmlDoc = parser.parseFromString(xmlString, "text/xml");
@@ -579,7 +548,6 @@
                 }
             }
             
-            // Fallback if part isn't found
             if (!targetPart && parts.length > 0) targetPart = parts[0];
             if (!targetPart) return { data: [], yMin: 36, yMax: 96, totalBeats: 0 };
             
@@ -698,34 +666,10 @@
         const playRecordingBtn = document.getElementById('play-recording-btn');
         const statusText = document.getElementById('status');
 
-        // NEW: Function to precisely map our graph data to the correct AlphaTab track internally
-        function indexAlphaTabNotes(score, trackIndex) {
-            alphaTabNotesIndex = [];
+        function applyTrackSelection(score, trackIndex) {
             if (!score || !score.tracks || score.tracks.length <= trackIndex) return;
-            
             const track = score.tracks[trackIndex];
-            track.staves.forEach(staff => {
-                staff.bars.forEach(bar => {
-                    const barStart = bar.masterBar ? bar.masterBar.start : (bar.start || 0);
-                    
-                    bar.voices.forEach(voice => {
-                        voice.beats.forEach(beat => {
-                            const beatStart = beat.start || 0;
-                            const absoluteTick = barStart + beatStart;
-                            
-                            beat.notes.forEach(note => {
-                                alphaTabNotesIndex.push({
-                                    tick: absoluteTick,
-                                    pitch: note.realValue, 
-                                    noteObj: note
-                                });
-                            });
-                        });
-                    });
-                });
-            });
-
-            // Mute all other tracks, only play the selected one
+            
             score.tracks.forEach((t, i) => {
                 api.changeTrackVolume(t, i === trackIndex ? 1 : 0);
             });
@@ -736,7 +680,7 @@
             if (!window.totalBeats) {
                 statusText.innerText = "Audio engine ready. Upload an XML file to begin!";
             }
-            indexAlphaTabNotes(score, currentTrackIndex);
+            applyTrackSelection(score, currentTrackIndex);
         });
 
         api.playerStateChanged.on((args) => {
@@ -790,7 +734,6 @@
             }
         });
 
-        // NEW: Event listener for swapping the part dropdown
         partSelect.addEventListener('change', (e) => {
             const selectedPartId = e.target.value;
             const selectedOption = e.target.options[e.target.selectedIndex];
@@ -819,7 +762,7 @@
                 updateChartWindow();
                 
                 if (api.score) {
-                    indexAlphaTabNotes(api.score, currentTrackIndex);
+                    applyTrackSelection(api.score, currentTrackIndex);
                 }
             }
         });
@@ -835,7 +778,6 @@
                 const xmlString = decoder.decode(event.target.result);
                 window.globalXmlString = xmlString;
                 
-                // Parse out all the ensemble parts and put them in the dropdown
                 const parts = extractParts(xmlString);
                 partSelect.innerHTML = '';
                 parts.forEach(p => {
