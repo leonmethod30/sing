@@ -52,7 +52,6 @@
             border: 1px solid #ccc; border-radius: 4px; font-weight: bold;
         }
 
-        /* NEW: Styling for the Lyrics checkbox */
         .checkbox-control {
             display: flex; align-items: center; gap: 5px; font-size: 14px; font-weight: 600;
             background: #f8f9fa; padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd;
@@ -116,7 +115,7 @@
             <label for="file-input" class="btn">Choose Music</label>
             <input type="file" id="file-input" accept=".xml,.musicxml" style="display: none;">
             
-            <button id="play-pause-btn" disabled>Play Music</button>
+            <button id="play-pause-btn" disabled>Play Piano</button>
             <button id="record-btn" disabled>🎤 Record</button>
             <button id="record-with-piano-btn" disabled>🎹 Record with Piano</button>
             <button id="play-recording-btn" disabled>▶ Play Recording</button>
@@ -162,11 +161,11 @@
         const startBarInput = document.getElementById('start-bar-input');
         const endBarInput = document.getElementById('end-bar-input');
         const lyricsCheckbox = document.getElementById('lyrics-checkbox');
+        const playPauseBtn = document.getElementById('play-pause-btn');
         
         let alphaTabNotesIndex = [];
         let currentlyHoveredNoteIndex = null;
 
-        // Force a re-draw when lyrics are toggled
         lyricsCheckbox.addEventListener('change', () => {
             pitchChart.update('none');
         });
@@ -302,7 +301,6 @@
             }
         };
 
-        // NEW: Plugin to draw lyrics directly onto the canvas under the notes
         const lyricsPlugin = {
             id: 'lyricsPlugin',
             afterDraw: (chart) => {
@@ -315,24 +313,20 @@
 
                 ctx.save();
                 ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-                ctx.fillStyle = '#0056b3'; // Matches the blue note color
+                ctx.fillStyle = '#0056b3'; 
                 ctx.textAlign = 'center';
-                ctx.textBaseline = 'top'; // Draw text down from the y-coordinate
+                ctx.textBaseline = 'top'; 
 
-                // Iterate through the data by 3s to grab the start and end of each note
                 for (let i = 0; i < data.length; i += 3) {
                     const startPt = data[i];
                     const endPt = data[i+1];
                     
                     if (startPt && startPt.y !== null && startPt.lyric && endPt) {
-                        // Center the text mathematically in the middle of the note's duration
                         const midXValue = (startPt.x + endPt.x) / 2;
                         const xPixel = xAxis.getPixelForValue(midXValue);
                         const yPixel = yAxis.getPixelForValue(startPt.y);
                         
-                        // Only draw if within the visible chart area
                         if (xPixel >= xAxis.left && xPixel <= xAxis.right) {
-                            // Draw 10px below the line
                             ctx.fillText(startPt.lyric, xPixel, yPixel + 10); 
                         }
                     }
@@ -344,7 +338,7 @@
         const ctx = document.getElementById('pitchChart').getContext('2d');
         const pitchChart = new Chart(ctx, {
             type: 'scatter',
-            plugins: [verticalCursorPlugin, regionShadingPlugin, lyricsPlugin], // Registered lyrics plugin
+            plugins: [verticalCursorPlugin, regionShadingPlugin, lyricsPlugin], 
             data: {
                 datasets: [
                     {
@@ -353,7 +347,8 @@
                         borderColor: '#0056b3',
                         backgroundColor: '#0056b3',
                         showLine: true,
-                        pointRadius: 0,
+                        // FIXED: Adjusted start point size to 2 for a more subtle bump
+                        pointRadius: (context) => context.dataIndex % 3 === 0 ? 2 : 0,
                         pointHitRadius: 10, 
                         borderWidth: 4,
                         spanGaps: false 
@@ -639,7 +634,6 @@
         const api = new alphaTab.AlphaTabApi(document.getElementById('hidden-audio-player'), settings);
         
         const fileInput = document.getElementById('file-input');
-        const playPauseBtn = document.getElementById('play-pause-btn');
         const recordBtn = document.getElementById('record-btn');
         const recordWithPianoBtn = document.getElementById('record-with-piano-btn');
         const playRecordingBtn = document.getElementById('play-recording-btn');
@@ -679,11 +673,11 @@
 
         api.playerStateChanged.on((args) => {
             if (args.state === 1) { 
-                playPauseBtn.innerText = 'Pause Music';
+                playPauseBtn.innerText = 'Pause Piano'; // FIXED: Changed text to Piano
                 if (!isRecording) window.isCursorActive = true;
                 if (!recordedAudio.paused) recordedAudio.pause();
             } else {
-                playPauseBtn.innerText = 'Play Music';
+                playPauseBtn.innerText = 'Play Piano'; // FIXED: Changed text to Piano
                 if (!isRecording && recordedAudio.paused) {
                     window.isCursorActive = false;
                     pitchChart.update('none'); 
