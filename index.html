@@ -43,7 +43,6 @@
         #play-recording-btn { background-color: #28a745; }
         #play-recording-btn:hover:not(:disabled) { background-color: #218838; }
 
-        /* NEW: Styling for the Bar constraints UI */
         .bar-controls {
             display: flex; gap: 8px; align-items: center; font-size: 14px; font-weight: 600;
             background: #f8f9fa; padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd;
@@ -135,12 +134,10 @@
         window.totalBeats = 0; 
         window.currentBPM = 120;
         
-        // Pagination & Looping State Variables
         window.currentStartBar = 0;
         window.visibleBars = 4;
         window.totalBars = 0;
         
-        // NEW: Loop bounds variables
         window.loopStartBar = 1;
         window.loopEndBar = 1;
 
@@ -151,7 +148,6 @@
         let alphaTabNotesIndex = [];
         let currentlyHoveredNoteIndex = null;
 
-        // NEW: Synchronize and validate input fields
         function syncBarInputs() {
             let s = parseInt(startBarInput.value);
             let e = parseInt(endBarInput.value);
@@ -164,7 +160,6 @@
                 if (e > window.totalBars) e = window.totalBars;
             }
             
-            // Constrain start to not exceed end
             if (s > e) s = e; 
             
             startBarInput.value = s;
@@ -172,7 +167,6 @@
             window.loopStartBar = s;
             window.loopEndBar = e;
             
-            // Auto-pan the window to the start of the loop
             window.currentStartBar = s - 1;
             updateChartWindow();
         }
@@ -188,7 +182,12 @@
             return '';
         }
 
+        // FIXED: Dynamically calculate display width based on total bars
         function updateChartWindow() {
+            const displayBars = (window.totalBars > 0 && window.totalBars < window.visibleBars) 
+                                ? window.totalBars 
+                                : window.visibleBars;
+
             if (window.totalBars <= window.visibleBars) {
                 window.currentStartBar = 0; 
             } else {
@@ -198,18 +197,23 @@
             }
 
             const minBeat = window.currentStartBar * window.beatsPerBar;
-            const maxBeat = (window.currentStartBar + window.visibleBars) * window.beatsPerBar;
+            const maxBeat = (window.currentStartBar + displayBars) * window.beatsPerBar;
 
             pitchChart.options.scales.x.min = minBeat;
             pitchChart.options.scales.x.max = maxBeat;
             pitchChart.update('none');
         }
 
+        // FIXED: Calculate boundaries based on dynamic display width
         function autoFollowCursor() {
-            const maxVisibleBeat = (window.currentStartBar + window.visibleBars) * window.beatsPerBar;
+            const displayBars = (window.totalBars > 0 && window.totalBars < window.visibleBars) 
+                                ? window.totalBars 
+                                : window.visibleBars;
+
+            const maxVisibleBeat = (window.currentStartBar + displayBars) * window.beatsPerBar;
             const minVisibleBeat = window.currentStartBar * window.beatsPerBar;
 
-            if (window.currentCursorBeat >= maxVisibleBeat) {
+            if (window.currentCursorBeat >= maxVisibleBeat && window.totalBars > window.visibleBars) {
                 window.currentStartBar += window.visibleBars; 
                 updateChartWindow();
             } else if (window.currentCursorBeat < minVisibleBeat) {
@@ -243,7 +247,6 @@
             }
         };
 
-        // NEW: Plugin to gray out out-of-bound bars
         const regionShadingPlugin = {
             id: 'regionShading',
             beforeDraw: (chart) => {
@@ -256,9 +259,8 @@
                 const endBeat = window.loopEndBar * window.beatsPerBar;
 
                 ctx.save();
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.08)'; // Transparent Gray
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.08)'; 
 
-                // Gray out anything to the left of Start Bar
                 if (startBeat > xAxis.min) {
                     const startPx = Math.max(xAxis.left, xAxis.getPixelForValue(xAxis.min));
                     const endPx = Math.min(xAxis.right, xAxis.getPixelForValue(startBeat));
@@ -267,7 +269,6 @@
                     }
                 }
 
-                // Gray out anything to the right of End Bar
                 if (endBeat < xAxis.max) {
                     const startPx = Math.max(xAxis.left, xAxis.getPixelForValue(endBeat));
                     const endPx = Math.min(xAxis.right, xAxis.getPixelForValue(xAxis.max));
@@ -283,7 +284,7 @@
         const ctx = document.getElementById('pitchChart').getContext('2d');
         const pitchChart = new Chart(ctx, {
             type: 'scatter',
-            plugins: [verticalCursorPlugin, regionShadingPlugin], // ADDED shading plugin
+            plugins: [verticalCursorPlugin, regionShadingPlugin], 
             data: {
                 datasets: [
                     {
@@ -636,7 +637,6 @@
             if (window.isCursorActive && !isRecording && recordedAudio.paused) {
                 window.currentCursorBeat = (args.currentTick || 0) / 960;
                 
-                // FIXED: Enforce playback constraint
                 const endBeat = window.loopEndBar * window.beatsPerBar;
                 if (window.currentCursorBeat >= endBeat) {
                     api.pause();
@@ -657,7 +657,6 @@
             if (api.playerState === 1) {
                 api.pause();
             } else {
-                // FIXED: Force start from correct position if out of bounds
                 const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
                 const endBeat = window.loopEndBar * window.beatsPerBar;
                 
@@ -686,11 +685,9 @@
                 window.totalBeats = parsed.totalBeats;
                 window.totalBars = Math.ceil(window.totalBeats / window.beatsPerBar);
                 
-                // Set constraints based on file bounds
                 window.loopStartBar = 1;
                 window.loopEndBar = window.totalBars;
                 
-                // Update inputs
                 startBarInput.max = window.totalBars;
                 endBarInput.max = window.totalBars;
                 startBarInput.value = 1;
@@ -728,11 +725,9 @@
         function animatePlaybackCursor() {
             if (!recordedAudio.paused && !isRecording) {
                 const beatsPerSecond = window.currentBPM / 60;
-                // Offset playback based on what region was recorded
                 const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
                 window.currentCursorBeat = startOffsetBeats + recordedAudio.currentTime * beatsPerSecond;
                 
-                // Stop constraints
                 const endBeat = window.loopEndBar * window.beatsPerBar;
                 if (window.currentCursorBeat >= endBeat) {
                     recordedAudio.pause();
@@ -778,7 +773,6 @@
                 const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
                 const endBeat = window.loopEndBar * window.beatsPerBar;
                 
-                // Map current play position cleanly
                 if (window.currentCursorBeat < startOffsetBeats || window.currentCursorBeat >= endBeat) {
                     recordedAudio.currentTime = 0;
                     window.currentCursorBeat = startOffsetBeats;
@@ -868,7 +862,6 @@
                 const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
                 const endBeat = window.loopEndBar * window.beatsPerBar;
 
-                // Sync UI and chart to start position
                 window.currentCursorBeat = startOffsetBeats;
                 window.currentStartBar = window.loopStartBar - 1;
                 updateChartWindow();
@@ -973,7 +966,6 @@
                                 lastChartUpdate = now;
                             }
 
-                            // FIXED: Stop recording automatically when the loop end is reached
                             if (window.currentCursorBeat >= endBeat) {
                                 toggleRecording(); 
                             }
