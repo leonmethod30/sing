@@ -47,10 +47,11 @@
             display: flex; gap: 8px; align-items: center; font-size: 14px; font-weight: 600;
             background: #f8f9fa; padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd;
         }
-        .bar-controls input { 
-            width: 55px; padding: 4px; text-align: center; 
+        .bar-controls input, .bar-controls select { 
+            padding: 4px; text-align: center; 
             border: 1px solid #ccc; border-radius: 4px; font-weight: bold;
         }
+        .bar-controls input { width: 55px; }
 
         .checkbox-control {
             display: flex; align-items: center; gap: 5px; font-size: 14px; font-weight: 600;
@@ -115,6 +116,11 @@
             <label for="file-input" class="btn">Choose Music</label>
             <input type="file" id="file-input" accept=".xml,.musicxml" style="display: none;">
             
+            <div class="bar-controls">
+                <label>Part:</label>
+                <select id="part-select" disabled></select>
+            </div>
+            
             <button id="play-pause-btn" disabled>Play Piano</button>
             <button id="record-btn" disabled>🎤 Record</button>
             <button id="record-with-piano-btn" disabled>🎹 Record with Piano</button>
@@ -150,6 +156,10 @@
         window.totalBeats = 0; 
         window.currentBPM = 120;
         
+        // Multi-Part Global State
+        window.globalXmlString = null;
+        let currentTrackIndex = 0;
+        
         window.currentStartBar = 0;
         window.visibleBars = 4;
         window.totalBars = 0;
@@ -162,6 +172,7 @@
         const endBarInput = document.getElementById('end-bar-input');
         const lyricsCheckbox = document.getElementById('lyrics-checkbox');
         const playPauseBtn = document.getElementById('play-pause-btn');
+        const partSelect = document.getElementById('part-select');
         
         let alphaTabNotesIndex = [];
         let currentlyHoveredNoteIndex = null;
@@ -347,7 +358,6 @@
                         borderColor: '#0056b3',
                         backgroundColor: '#0056b3',
                         showLine: true,
-                        // FIXED: Adjusted start point size to 2 for a more subtle bump
                         pointRadius: (context) => context.dataIndex % 3 === 0 ? 2 : 0,
                         pointHitRadius: 10, 
                         borderWidth: 4,
@@ -532,29 +542,76 @@
         });
 
         // --- 2. MUSICXML CUSTOM PARSER ---
-        function parseXMLToGraph(xmlString) {
+        
+        // NEW: Function to extract the available parts for the dropdown
+        function extractParts(xmlString) {
             const parser = new DOMParser();
             const xmlDoc = parser.parseFromString(xmlString, "text/xml");
-            const notes = xmlDoc.getElementsByTagName("note");
+            const partList = xmlDoc.getElementsByTagName("part-list");
+            const parts = [];
+            
+            if (partList.length > 0) {
+                const scoreParts = partList[0].getElementsByTagName("score-part");
+                for (let i = 0; i < scoreParts.length; i++) {
+                    const id = scoreParts[i].getAttribute("id");
+                    const nameNode = scoreParts[i].getElementsByTagName("part-name");
+                    const name = nameNode.length > 0 ? nameNode[0].textContent : `Part ${i+1}`;
+                    parts.push({ id, name, index: i });
+                }
+            }
+            return parts;
+        }
+
+        // FIXED: Parse only the explicitly selected target part
+        function parseXMLToGraph(xmlString, targetPartId) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+            
+            let targetPart = null;
+            const parts = xmlDoc.getElementsByTagName("part");
+            
+            if (targetPartId) {
+                for (let i = 0; i < parts.length; i++) {
+                    if (parts[i].getAttribute("id") === targetPartId) {
+                        targetPart = parts[i];
+                        break;
+                    }
+                }
+            }
+            
+            // Fallback if part isn't found
+            if (!targetPart && parts.length > 0) targetPart = parts[0];
+            if (!targetPart) return { data: [], yMin: 36, yMax: 96, totalBeats: 0 };
             
             let divisions = 1;
-            const divNodes = xmlDoc.getElementsByTagName("divisions");
+            const divNodes = targetPart.getElementsByTagName("divisions");
             if (divNodes.length > 0) divisions = parseInt(divNodes[0].textContent);
-
-            const beatsNode = xmlDoc.getElementsByTagName("beats");
-            if (beatsNode.length > 0) {
-                window.beatsPerBar = parseInt(beatsNode[0].textContent) || 4;
+            else {
+                const fallbackDivNodes = xmlDoc.getElementsByTagName("divisions");
+                if (fallbackDivNodes.length > 0) divisions = parseInt(fallbackDivNodes[0].textContent);
             }
 
-            const perMinuteNodes = xmlDoc.getElementsByTagName("per-minute");
+            const beatsNode = targetPart.getElementsByTagName("beats");
+            if (beatsNode.length > 0) {
+                window.beatsPerBar = parseInt(beatsNode[0].textContent) || 4;
+            } else {
+                const globalBeats = xmlDoc.getElementsByTagName("beats");
+                if (globalBeats.length > 0) window.beatsPerBar = parseInt(globalBeats[0].textContent) || 4;
+            }
+
+            const perMinuteNodes = targetPart.getElementsByTagName("per-minute");
             if (perMinuteNodes.length > 0) {
                 window.currentBPM = parseInt(perMinuteNodes[0].textContent) || 120;
             } else {
-                const soundNodes = xmlDoc.getElementsByTagName("sound");
-                for (let i = 0; i < soundNodes.length; i++) {
-                    if (soundNodes[i].hasAttribute("tempo")) {
-                        window.currentBPM = parseInt(soundNodes[i].getAttribute("tempo")) || 120;
-                        break;
+                const globalPerMin = xmlDoc.getElementsByTagName("per-minute");
+                if (globalPerMin.length > 0) window.currentBPM = parseInt(globalPerMin[0].textContent) || 120;
+                else {
+                    const soundNodes = xmlDoc.getElementsByTagName("sound");
+                    for (let i = 0; i < soundNodes.length; i++) {
+                        if (soundNodes[i].hasAttribute("tempo")) {
+                            window.currentBPM = parseInt(soundNodes[i].getAttribute("tempo")) || 120;
+                            break;
+                        }
                     }
                 }
             }
@@ -564,6 +621,8 @@
             const graphData = [];
             let minMidiFound = Infinity;
             let maxMidiFound = -Infinity;
+
+            const notes = targetPart.getElementsByTagName("note");
 
             for (let i = 0; i < notes.length; i++) {
                 const note = notes[i];
@@ -639,45 +698,54 @@
         const playRecordingBtn = document.getElementById('play-recording-btn');
         const statusText = document.getElementById('status');
 
-        api.scoreLoaded.on((score) => {
-            if (!window.totalBeats) {
-                statusText.innerText = "Audio engine ready. Upload an XML file to begin!";
-            }
-            
+        // NEW: Function to precisely map our graph data to the correct AlphaTab track internally
+        function indexAlphaTabNotes(score, trackIndex) {
             alphaTabNotesIndex = [];
+            if (!score || !score.tracks || score.tracks.length <= trackIndex) return;
             
-            if (score.tracks && score.tracks.length > 0) {
-                const track = score.tracks[0];
-                track.staves.forEach(staff => {
-                    staff.bars.forEach(bar => {
-                        const barStart = bar.masterBar ? bar.masterBar.start : (bar.start || 0);
-                        
-                        bar.voices.forEach(voice => {
-                            voice.beats.forEach(beat => {
-                                const beatStart = beat.start || 0;
-                                const absoluteTick = barStart + beatStart;
-                                
-                                beat.notes.forEach(note => {
-                                    alphaTabNotesIndex.push({
-                                        tick: absoluteTick,
-                                        pitch: note.realValue, 
-                                        noteObj: note
-                                    });
+            const track = score.tracks[trackIndex];
+            track.staves.forEach(staff => {
+                staff.bars.forEach(bar => {
+                    const barStart = bar.masterBar ? bar.masterBar.start : (bar.start || 0);
+                    
+                    bar.voices.forEach(voice => {
+                        voice.beats.forEach(beat => {
+                            const beatStart = beat.start || 0;
+                            const absoluteTick = barStart + beatStart;
+                            
+                            beat.notes.forEach(note => {
+                                alphaTabNotesIndex.push({
+                                    tick: absoluteTick,
+                                    pitch: note.realValue, 
+                                    noteObj: note
                                 });
                             });
                         });
                     });
                 });
+            });
+
+            // Mute all other tracks, only play the selected one
+            score.tracks.forEach((t, i) => {
+                api.changeTrackVolume(t, i === trackIndex ? 1 : 0);
+            });
+            api.renderTracks([track]);
+        }
+
+        api.scoreLoaded.on((score) => {
+            if (!window.totalBeats) {
+                statusText.innerText = "Audio engine ready. Upload an XML file to begin!";
             }
+            indexAlphaTabNotes(score, currentTrackIndex);
         });
 
         api.playerStateChanged.on((args) => {
             if (args.state === 1) { 
-                playPauseBtn.innerText = 'Pause Piano'; // FIXED: Changed text to Piano
+                playPauseBtn.innerText = 'Pause Piano'; 
                 if (!isRecording) window.isCursorActive = true;
                 if (!recordedAudio.paused) recordedAudio.pause();
             } else {
-                playPauseBtn.innerText = 'Play Piano'; // FIXED: Changed text to Piano
+                playPauseBtn.innerText = 'Play Piano'; 
                 if (!isRecording && recordedAudio.paused) {
                     window.isCursorActive = false;
                     pitchChart.update('none'); 
@@ -722,6 +790,40 @@
             }
         });
 
+        // NEW: Event listener for swapping the part dropdown
+        partSelect.addEventListener('change', (e) => {
+            const selectedPartId = e.target.value;
+            const selectedOption = e.target.options[e.target.selectedIndex];
+            currentTrackIndex = parseInt(selectedOption.dataset.index);
+
+            if (window.globalXmlString) {
+                const parsed = parseXMLToGraph(window.globalXmlString, selectedPartId);
+                
+                window.totalBeats = parsed.totalBeats;
+                window.totalBars = Math.ceil(window.totalBeats / window.beatsPerBar);
+                
+                window.loopStartBar = 1;
+                window.loopEndBar = window.totalBars;
+                
+                startBarInput.max = window.totalBars;
+                endBarInput.max = window.totalBars;
+                startBarInput.value = 1;
+                endBarInput.value = window.totalBars;
+                
+                window.currentStartBar = 0;
+
+                pitchChart.data.datasets[0].data = parsed.data;
+                pitchChart.options.scales.y.min = parsed.yMin;
+                pitchChart.options.scales.y.max = parsed.yMax;
+                
+                updateChartWindow();
+                
+                if (api.score) {
+                    indexAlphaTabNotes(api.score, currentTrackIndex);
+                }
+            }
+        });
+
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -729,12 +831,26 @@
             
             const reader = new FileReader();
             reader.onload = (event) => {
-                api.load(new Uint8Array(event.target.result));
-                
                 const decoder = new TextDecoder();
                 const xmlString = decoder.decode(event.target.result);
+                window.globalXmlString = xmlString;
                 
-                const parsed = parseXMLToGraph(xmlString);
+                // Parse out all the ensemble parts and put them in the dropdown
+                const parts = extractParts(xmlString);
+                partSelect.innerHTML = '';
+                parts.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.name;
+                    opt.dataset.index = p.index;
+                    partSelect.appendChild(opt);
+                });
+                partSelect.disabled = false;
+
+                const initialPartId = parts.length > 0 ? parts[0].id : null;
+                currentTrackIndex = 0;
+                
+                const parsed = parseXMLToGraph(xmlString, initialPartId);
                 
                 window.totalBeats = parsed.totalBeats;
                 window.totalBars = Math.ceil(window.totalBeats / window.beatsPerBar);
@@ -762,6 +878,8 @@
                 recordWithPianoBtn.disabled = false;
                 
                 statusText.innerText = `Score plotted! Total length: ${window.totalBars} bars.`;
+                
+                api.load(new Uint8Array(event.target.result));
             };
             reader.readAsArrayBuffer(file);
         });
