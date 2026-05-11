@@ -106,6 +106,12 @@
             pointer-events: none; border-radius: 8px;
         }
 
+        /* NEW: Hardware-accelerated independent DOM cursor to fix audio stutter */
+        #playback-cursor {
+            position: absolute; width: 3px; background-color: rgba(255, 204, 0, 0.8);
+            display: none; pointer-events: none; z-index: 10;
+        }
+
         #hidden-audio-player { display: none; }
     </style>
 </head>
@@ -143,6 +149,7 @@
 
         <div id="graph-wrapper">
             <div id="countdown-overlay">4</div>
+            <div id="playback-cursor"></div>
             <canvas id="pitchChart"></canvas>
         </div>
 
@@ -211,6 +218,33 @@
             return '';
         }
 
+        // NEW: Independent DOM cursor updates (Zero-cost render)
+        function updateCursor() {
+            const cursorEl = document.getElementById('playback-cursor');
+            if (!pitchChart.chartArea) {
+                cursorEl.style.display = 'none';
+                return;
+            }
+
+            if (window.isCursorActive && window.currentCursorBeat !== undefined) {
+                const xAxis = pitchChart.scales.x;
+                
+                // Only draw if within visible chart window
+                if (window.currentCursorBeat >= xAxis.min && window.currentCursorBeat <= xAxis.max) {
+                    const xPixel = xAxis.getPixelForValue(window.currentCursorBeat);
+                    cursorEl.style.display = 'block';
+                    // Offset by 15px to account for the wrapper's padding
+                    cursorEl.style.left = (xPixel + 15) + 'px';
+                    cursorEl.style.top = (pitchChart.chartArea.top + 15) + 'px';
+                    cursorEl.style.height = (pitchChart.chartArea.bottom - pitchChart.chartArea.top) + 'px';
+                } else {
+                    cursorEl.style.display = 'none';
+                }
+            } else {
+                cursorEl.style.display = 'none';
+            }
+        }
+
         function updateChartWindow() {
             const displayBars = (window.totalBars > 0 && window.totalBars < window.visibleBars) 
                                 ? window.totalBars 
@@ -229,7 +263,9 @@
 
             pitchChart.options.scales.x.min = minBeat;
             pitchChart.options.scales.x.max = maxBeat;
+            
             pitchChart.update('none');
+            updateCursor(); // Sync DOM cursor immediately when panned
         }
 
         function autoFollowCursor() {
@@ -240,40 +276,21 @@
             const maxVisibleBeat = (window.currentStartBar + displayBars) * window.beatsPerBar;
             const minVisibleBeat = window.currentStartBar * window.beatsPerBar;
 
+            let changed = false;
             if (window.currentCursorBeat >= maxVisibleBeat && window.totalBars > window.visibleBars) {
                 window.currentStartBar += window.visibleBars; 
-                updateChartWindow();
+                changed = true;
             } else if (window.currentCursorBeat < minVisibleBeat) {
                 window.currentStartBar = Math.floor(window.currentCursorBeat / window.beatsPerBar);
+                changed = true;
+            }
+
+            if (changed) {
                 updateChartWindow();
             }
         }
 
         // --- 1. GRAPH SETUP & CUSTOM PLUGINS ---
-        const verticalCursorPlugin = {
-            id: 'verticalCursor',
-            afterDraw: (chart) => {
-                if (window.isCursorActive && window.currentCursorBeat !== undefined) {
-                    const ctx = chart.ctx;
-                    const xAxis = chart.scales.x;
-                    const yAxis = chart.scales.y;
-                    
-                    const xPixel = xAxis.getPixelForValue(window.currentCursorBeat);
-
-                    if (xPixel >= xAxis.left && xPixel <= xAxis.right) {
-                        ctx.save();
-                        ctx.beginPath();
-                        ctx.moveTo(xPixel, yAxis.top);
-                        ctx.lineTo(xPixel, yAxis.bottom);
-                        ctx.lineWidth = 3;
-                        ctx.strokeStyle = 'rgba(255, 204, 0, 0.8)'; 
-                        ctx.stroke();
-                        ctx.restore();
-                    }
-                }
-            }
-        };
-
         const regionShadingPlugin = {
             id: 'regionShading',
             beforeDraw: (chart) => {
@@ -324,16 +341,20 @@
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top'; 
 
+                const minX = xAxis.min;
+                const maxX = xAxis.max;
+
                 for (let i = 0; i < data.length; i += 3) {
                     const startPt = data[i];
                     const endPt = data[i+1];
                     
                     if (startPt && startPt.y !== null && startPt.lyric && endPt) {
                         const midXValue = (startPt.x + endPt.x) / 2;
-                        const xPixel = xAxis.getPixelForValue(midXValue);
-                        const yPixel = yAxis.getPixelForValue(startPt.y);
                         
-                        if (xPixel >= xAxis.left && xPixel <= xAxis.right) {
+                        // FIXED: Massive performance boost - only compute coordinates for on-screen lyrics
+                        if (midXValue >= minX && midXValue <= maxX) {
+                            const xPixel = xAxis.getPixelForValue(midXValue);
+                            const yPixel = yAxis.getPixelForValue(startPt.y);
                             ctx.fillText(startPt.lyric, xPixel, yPixel + 10); 
                         }
                     }
@@ -345,7 +366,7 @@
         const ctx = document.getElementById('pitchChart').getContext('2d');
         const pitchChart = new Chart(ctx, {
             type: 'scatter',
-            plugins: [verticalCursorPlugin, regionShadingPlugin, lyricsPlugin], 
+            plugins: [regionShadingPlugin, lyricsPlugin], // Removed heavy canvas cursor plugin
             data: {
                 datasets: [
                     {
@@ -355,9 +376,7 @@
                         backgroundColor: '#0056b3',
                         showLine: true,
                         pointRadius: (context) => {
-                            if (context.type === 'data') {
-                                return context.dataIndex % 3 === 0 ? 2 : 0;
-                            }
+                            if (context.type === 'data') return context.dataIndex % 3 === 0 ? 2 : 0;
                             return 0;
                         },
                         pointHitRadius: 10, 
@@ -686,19 +705,21 @@
         api.playerStateChanged.on((args) => {
             if (args.state === 1) { 
                 playPauseBtn.innerText = 'Pause Piano'; 
-                if (!isRecording) window.isCursorActive = true;
+                if (!isRecording) {
+                    window.isCursorActive = true;
+                    updateCursor();
+                }
                 if (!recordedAudio.paused) recordedAudio.pause();
             } else {
                 playPauseBtn.innerText = 'Play Piano'; 
                 if (!isRecording && recordedAudio.paused) {
                     window.isCursorActive = false;
-                    pitchChart.update('none'); 
+                    updateCursor();
                 }
             }
         });
-
-        let lastPlaybackUpdate = performance.now();
         
+        // FIXED: Redrawing the canvas is completely eliminated from native playback to stop lag/distortion
         api.playerPositionChanged.on((args) => {
             if (window.isCursorActive && !isRecording && recordedAudio.paused) {
                 window.currentCursorBeat = (args.currentTick || 0) / 960;
@@ -709,13 +730,8 @@
                     window.currentCursorBeat = (window.loopStartBar - 1) * window.beatsPerBar;
                 }
                 
-                autoFollowCursor();
-                
-                const now = performance.now();
-                if (now - lastPlaybackUpdate > 33) {
-                    pitchChart.update('none'); 
-                    lastPlaybackUpdate = now;
-                }
+                autoFollowCursor(); // This will pan and redraw the window if we hit the edge
+                updateCursor();     // This hardware-accelerates the cursor movement
             }
         });
 
@@ -850,7 +866,7 @@
                 }
                 
                 autoFollowCursor();
-                pitchChart.update('none');
+                updateCursor();
                 
                 if (!recordedAudio.paused) {
                     playbackAnimationId = requestAnimationFrame(animatePlaybackCursor);
@@ -869,7 +885,7 @@
             playRecordingBtn.innerText = '▶ Play Recording';
             window.isCursorActive = false;
             cancelAnimationFrame(playbackAnimationId);
-            pitchChart.update('none');
+            updateCursor();
         });
 
         recordedAudio.addEventListener('ended', () => {
@@ -879,7 +895,6 @@
             window.currentStartBar = window.loopStartBar - 1;
             updateChartWindow();
             cancelAnimationFrame(playbackAnimationId);
-            pitchChart.update('none');
         });
 
         playRecordingBtn.addEventListener('click', () => {
@@ -1065,6 +1080,7 @@
                             window.currentCursorBeat = startOffsetBeats + ((audioContext.currentTime - startAudioTime) * beatsPerSecond); 
                             
                             autoFollowCursor();
+                            updateCursor(); // Keeps recording cursor extremely smooth
                             
                             if (freq !== -1) {
                                 const midiNote = 12 * Math.log2(freq / 440) + 69;
@@ -1074,6 +1090,7 @@
                                 }
                             }
 
+                            // Chart update only required during recording to draw new red lines
                             const now = performance.now();
                             if (now - lastChartUpdate > 33) { 
                                 pitchChart.update('none'); 
