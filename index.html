@@ -53,7 +53,6 @@
         }
         .bar-controls input { width: 55px; }
 
-        /* Make the score dropdown a bit wider to fit filenames */
         #music-select { min-width: 150px; text-align: left; }
 
         .checkbox-control {
@@ -170,14 +169,13 @@
     </div>
 
     <script>
-        // ==========================================
-        // ADD YOUR XML FILE NAMES HERE!
-        // These files MUST be inside a folder named "music"
-        // placed right next to this index.html file.
-        // ==========================================
+        // FIXED: Alphabetical order
         const availableMusicFiles = [
-            "when-you-want-it-the-most-alto-2.xml",
-            "when-you-want-it-the-most-tenor-2.xml"
+            "because-of-you.xml",
+            "man-i-need.xml",
+            "together-intro.xml",
+            "when-we-rise.xml",
+            "when-you-want.xml"
         ];
 
         window.beatsPerBar = 4;
@@ -212,11 +210,10 @@
         let alphaTabNotesIndex = [];
         let currentlyHoveredNoteIndex = null;
 
-        // --- NEW: INITIALIZE DROPDOWN ---
         availableMusicFiles.forEach(fileName => {
             const opt = document.createElement('option');
-            opt.value = fileName;
-            opt.textContent = fileName;
+            opt.value = fileName; // Internal value remains exact file path
+            opt.textContent = fileName.replace('.xml', ''); // FIXED: Removed .xml extension for display
             musicSelect.appendChild(opt);
         });
         const customOpt = document.createElement('option');
@@ -744,7 +741,6 @@
             return { data: graphData, yMin: yMin, yMax: yMax, totalBeats: maxBeatFound };
         }
 
-        // --- NEW: CENTRALIZED PROCESSOR FOR FILE LOADS ---
         function processMusicXML(xmlString, uint8Array) {
             window.globalXmlString = xmlString;
             
@@ -806,7 +802,6 @@
 
         const api = new alphaTab.AlphaTabApi(document.getElementById('hidden-audio-player'), settings);
 
-        // --- NEW: HANDLE DROPDOWN SELECTIONS ---
         musicSelect.addEventListener('change', async (e) => {
             const val = e.target.value;
             
@@ -815,7 +810,6 @@
             } else if (val) {
                 statusText.innerText = `Fetching ${val}...`;
                 try {
-                    // Note: This fetch request requires running via a local web server (CORS restrictions apply to file://)
                     const response = await fetch('music/' + val);
                     if (!response.ok) throw new Error("File not found");
                     
@@ -831,7 +825,6 @@
             }
         });
 
-        // HANDLE CUSTOM FILE UPLOADS
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) {
