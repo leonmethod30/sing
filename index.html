@@ -53,6 +53,9 @@
         }
         .bar-controls input { width: 55px; }
 
+        /* Make the score dropdown a bit wider to fit filenames */
+        #music-select { min-width: 150px; text-align: left; }
+
         .checkbox-control {
             display: flex; align-items: center; gap: 5px; font-size: 14px; font-weight: 600;
             background: #f8f9fa; padding: 8px 12px; border-radius: 6px; border: 1px solid #ddd;
@@ -122,7 +125,14 @@
 
     <div class="container">
         <div class="toolbar">
-            <label for="file-input" class="btn">Choose Music</label>
+            
+            <div class="bar-controls">
+                <label>Score:</label>
+                <select id="music-select">
+                    <option value="" disabled selected>Select Music...</option>
+                </select>
+            </div>
+
             <input type="file" id="file-input" accept=".xml,.musicxml" style="display: none;">
             
             <div class="bar-controls">
@@ -160,6 +170,16 @@
     </div>
 
     <script>
+        // ==========================================
+        // ADD YOUR XML FILE NAMES HERE!
+        // These files MUST be inside a folder named "music"
+        // placed right next to this index.html file.
+        // ==========================================
+        const availableMusicFiles = [
+            "when-you-want-it-the-most-alto-2.xml",
+            "when-you-want-it-the-most-tenor-2.xml"
+        ];
+
         window.beatsPerBar = 4;
         window.currentCursorBeat = 0;
         window.isCursorActive = false;
@@ -185,6 +205,24 @@
         const lyricsCheckbox = document.getElementById('lyrics-checkbox');
         const playPauseBtn = document.getElementById('play-pause-btn');
         const partSelect = document.getElementById('part-select');
+        const musicSelect = document.getElementById('music-select');
+        const fileInput = document.getElementById('file-input');
+        const statusText = document.getElementById('status');
+        
+        let alphaTabNotesIndex = [];
+        let currentlyHoveredNoteIndex = null;
+
+        // --- NEW: INITIALIZE DROPDOWN ---
+        availableMusicFiles.forEach(fileName => {
+            const opt = document.createElement('option');
+            opt.value = fileName;
+            opt.textContent = fileName;
+            musicSelect.appendChild(opt);
+        });
+        const customOpt = document.createElement('option');
+        customOpt.value = 'custom';
+        customOpt.textContent = 'Upload Custom XML...';
+        musicSelect.appendChild(customOpt);
 
         lyricsCheckbox.addEventListener('change', () => {
             pitchChart.update('none');
@@ -368,7 +406,6 @@
                 const minX = xAxis.min;
                 const maxX = xAxis.max;
                 
-                // FIXED: Track the rightmost edge of text per pitch level to avoid overlap
                 const lastRightEdges = {};
 
                 for (let i = 0; i < data.length; i += 3) {
@@ -382,11 +419,9 @@
                             let xPixel = xAxis.getPixelForValue(midXValue);
                             const yPixel = yAxis.getPixelForValue(startPt.y);
                             
-                            // Measure the width of the current word
                             const textWidth = ctx.measureText(startPt.lyric).width;
                             let leftEdge = xPixel - (textWidth / 2);
                             
-                            // Nudge the text to the right if it is going to collide with the previous word
                             if (lastRightEdges[startPt.y] !== undefined && leftEdge < lastRightEdges[startPt.y] + 8) {
                                 const shiftAmount = (lastRightEdges[startPt.y] + 8) - leftEdge;
                                 xPixel += shiftAmount;
@@ -395,7 +430,6 @@
                             
                             ctx.fillText(startPt.lyric, xPixel, yPixel + 10); 
                             
-                            // Save the new rightmost boundary for this pitch level
                             lastRightEdges[startPt.y] = leftEdge + textWidth;
                         }
                     }
@@ -710,6 +744,58 @@
             return { data: graphData, yMin: yMin, yMax: yMax, totalBeats: maxBeatFound };
         }
 
+        // --- NEW: CENTRALIZED PROCESSOR FOR FILE LOADS ---
+        function processMusicXML(xmlString, uint8Array) {
+            window.globalXmlString = xmlString;
+            
+            const parts = extractParts(xmlString);
+            partSelect.innerHTML = '';
+            parts.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.name;
+                opt.dataset.index = p.index;
+                partSelect.appendChild(opt);
+            });
+            partSelect.disabled = false;
+
+            const initialPartId = parts.length > 0 ? parts[0].id : null;
+            currentTrackIndex = 0;
+            
+            const parsed = parseXMLToGraph(xmlString, initialPartId);
+            
+            window.fullScoreData = parsed.data;
+            window.fullRecordedData = [];
+            
+            window.totalBeats = parsed.totalBeats;
+            window.totalBars = Math.ceil(window.totalBeats / window.beatsPerBar);
+            
+            window.loopStartBar = 1;
+            window.loopEndBar = window.totalBars;
+            
+            startBarInput.max = window.totalBars;
+            endBarInput.max = window.totalBars;
+            startBarInput.value = 1;
+            endBarInput.value = window.totalBars;
+            startBarInput.disabled = false;
+            endBarInput.disabled = false;
+            
+            window.currentStartBar = 0;
+
+            pitchChart.options.scales.y.min = parsed.yMin;
+            pitchChart.options.scales.y.max = parsed.yMax;
+            
+            updateChartWindow();
+            
+            document.getElementById('play-pause-btn').disabled = false;
+            document.getElementById('record-btn').disabled = false;
+            document.getElementById('record-with-piano-btn').disabled = false;
+            
+            statusText.innerText = `Score plotted! Total length: ${window.totalBars} bars.`;
+            
+            api.load(uint8Array);
+        }
+
         // --- 3. ALPHATAB AUDIO ENGINE (PLAYBACK TRACKING) ---
         const settings = {
             player: {
@@ -719,12 +805,51 @@
         };
 
         const api = new alphaTab.AlphaTabApi(document.getElementById('hidden-audio-player'), settings);
-        
-        const fileInput = document.getElementById('file-input');
-        const recordBtn = document.getElementById('record-btn');
-        const recordWithPianoBtn = document.getElementById('record-with-piano-btn');
-        const playRecordingBtn = document.getElementById('play-recording-btn');
-        const statusText = document.getElementById('status');
+
+        // --- NEW: HANDLE DROPDOWN SELECTIONS ---
+        musicSelect.addEventListener('change', async (e) => {
+            const val = e.target.value;
+            
+            if (val === 'custom') {
+                fileInput.click();
+            } else if (val) {
+                statusText.innerText = `Fetching ${val}...`;
+                try {
+                    // Note: This fetch request requires running via a local web server (CORS restrictions apply to file://)
+                    const response = await fetch('music/' + val);
+                    if (!response.ok) throw new Error("File not found");
+                    
+                    const arrayBuffer = await response.arrayBuffer();
+                    const uint8Array = new Uint8Array(arrayBuffer);
+                    const xmlString = new TextDecoder().decode(uint8Array);
+                    
+                    processMusicXML(xmlString, uint8Array);
+                } catch (err) {
+                    console.error(err);
+                    statusText.innerText = "Error: Make sure you are running a local server to fetch files.";
+                }
+            }
+        });
+
+        // HANDLE CUSTOM FILE UPLOADS
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) {
+                musicSelect.selectedIndex = 0; 
+                return;
+            }
+            statusText.innerText = "Parsing XML...";
+            
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const uint8Array = new Uint8Array(event.target.result);
+                const decoder = new TextDecoder();
+                const xmlString = decoder.decode(uint8Array);
+                
+                processMusicXML(xmlString, uint8Array);
+            };
+            reader.readAsArrayBuffer(file);
+        });
 
         function applyTrackSelection(score, trackIndex) {
             if (!score || !score.tracks || score.tracks.length <= trackIndex) return;
@@ -737,7 +862,7 @@
 
         api.scoreLoaded.on((score) => {
             if (!window.totalBeats) {
-                statusText.innerText = "Audio engine ready. Upload an XML file to begin!";
+                statusText.innerText = "Audio engine ready. Select a score to begin!";
             }
             applyTrackSelection(score, currentTrackIndex);
         });
@@ -830,67 +955,6 @@
             }
         });
 
-        fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            statusText.innerText = "Parsing XML...";
-            
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const decoder = new TextDecoder();
-                const xmlString = decoder.decode(event.target.result);
-                window.globalXmlString = xmlString;
-                
-                const parts = extractParts(xmlString);
-                partSelect.innerHTML = '';
-                parts.forEach(p => {
-                    const opt = document.createElement('option');
-                    opt.value = p.id;
-                    opt.textContent = p.name;
-                    opt.dataset.index = p.index;
-                    partSelect.appendChild(opt);
-                });
-                partSelect.disabled = false;
-
-                const initialPartId = parts.length > 0 ? parts[0].id : null;
-                currentTrackIndex = 0;
-                
-                const parsed = parseXMLToGraph(xmlString, initialPartId);
-                
-                window.fullScoreData = parsed.data;
-                window.fullRecordedData = [];
-                
-                window.totalBeats = parsed.totalBeats;
-                window.totalBars = Math.ceil(window.totalBeats / window.beatsPerBar);
-                
-                window.loopStartBar = 1;
-                window.loopEndBar = window.totalBars;
-                
-                startBarInput.max = window.totalBars;
-                endBarInput.max = window.totalBars;
-                startBarInput.value = 1;
-                endBarInput.value = window.totalBars;
-                startBarInput.disabled = false;
-                endBarInput.disabled = false;
-                
-                window.currentStartBar = 0;
-
-                pitchChart.options.scales.y.min = parsed.yMin;
-                pitchChart.options.scales.y.max = parsed.yMax;
-                
-                updateChartWindow();
-                
-                playPauseBtn.disabled = false;
-                recordBtn.disabled = false;
-                recordWithPianoBtn.disabled = false;
-                
-                statusText.innerText = `Score plotted! Total length: ${window.totalBars} bars.`;
-                
-                api.load(new Uint8Array(event.target.result));
-            };
-            reader.readAsArrayBuffer(file);
-        });
-
         // --- 4. MICROPHONE RECORDING & PLAYBACK TRACKING ---
         let audioContext, analyser, microphone;
         let isRecording = false;
@@ -900,6 +964,10 @@
         let audioChunks = [];
         let recordedAudio = new Audio();
         let playbackAnimationId;
+
+        const recordBtn = document.getElementById('record-btn');
+        const recordWithPianoBtn = document.getElementById('record-with-piano-btn');
+        const playRecordingBtn = document.getElementById('play-recording-btn');
 
         function animatePlaybackCursor() {
             if (!recordedAudio.paused && !isRecording) {
