@@ -176,7 +176,6 @@
         window.loopStartBar = 1;
         window.loopEndBar = 1;
 
-        // FIXED: We now keep the FULL data in memory, but only feed slices of it to Chart.js
         window.fullScoreData = [];
         window.fullRecordedData = [];
 
@@ -265,7 +264,6 @@
             const minBeat = window.currentStartBar * window.beatsPerBar;
             const maxBeat = (window.currentStartBar + displayBars) * window.beatsPerBar;
 
-            // FIXED: Dynamically slice the background array so Chart.js only renders what is currently visible
             const visibleScore = [];
             for (let i = 0; i < window.fullScoreData.length; i += 3) {
                 const p1 = window.fullScoreData[i];
@@ -273,7 +271,6 @@
                 const p3 = window.fullScoreData[i+2];
                 
                 if (p1 && p2) {
-                    // Check if the start and end overlap the visible window
                     if (p2.x >= minBeat && p1.x <= maxBeat) {
                         visibleScore.push(p1, p2, p3);
                     }
@@ -281,7 +278,6 @@
             }
             pitchChart.data.datasets[0].data = visibleScore;
 
-            // FIXED: Dynamically slice the recorded vocal data too
             const visibleRecord = [];
             for (let i = 0; i < window.fullRecordedData.length; i++) {
                 const pt = window.fullRecordedData[i];
@@ -371,6 +367,9 @@
 
                 const minX = xAxis.min;
                 const maxX = xAxis.max;
+                
+                // FIXED: Track the rightmost edge of text per pitch level to avoid overlap
+                const lastRightEdges = {};
 
                 for (let i = 0; i < data.length; i += 3) {
                     const startPt = data[i];
@@ -380,9 +379,24 @@
                         const midXValue = (startPt.x + endPt.x) / 2;
                         
                         if (midXValue >= minX && midXValue <= maxX) {
-                            const xPixel = xAxis.getPixelForValue(midXValue);
+                            let xPixel = xAxis.getPixelForValue(midXValue);
                             const yPixel = yAxis.getPixelForValue(startPt.y);
+                            
+                            // Measure the width of the current word
+                            const textWidth = ctx.measureText(startPt.lyric).width;
+                            let leftEdge = xPixel - (textWidth / 2);
+                            
+                            // Nudge the text to the right if it is going to collide with the previous word
+                            if (lastRightEdges[startPt.y] !== undefined && leftEdge < lastRightEdges[startPt.y] + 8) {
+                                const shiftAmount = (lastRightEdges[startPt.y] + 8) - leftEdge;
+                                xPixel += shiftAmount;
+                                leftEdge += shiftAmount;
+                            }
+                            
                             ctx.fillText(startPt.lyric, xPixel, yPixel + 10); 
+                            
+                            // Save the new rightmost boundary for this pitch level
+                            lastRightEdges[startPt.y] = leftEdge + textWidth;
                         }
                     }
                 }
@@ -719,8 +733,6 @@
             score.tracks.forEach((t, i) => {
                 api.changeTrackVolume(t, i === trackIndex ? 1 : 0);
             });
-            
-            // FIXED: Removed api.renderTracks to stop AlphaTab from rendering background visual elements
         }
 
         api.scoreLoaded.on((score) => {
@@ -747,7 +759,6 @@
             }
         });
 
-        // FIXED: Throttle the massive update loops coming from the internal clock
         let isCursorUpdatePending = false;
         
         api.playerPositionChanged.on((args) => {
