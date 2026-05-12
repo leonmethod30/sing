@@ -106,14 +106,12 @@
             pointer-events: none; border-radius: 8px;
         }
 
-        /* FIXED: Hardware accelerated cursor, left 0, relying entirely on GPU transform */
         #playback-cursor {
             position: absolute; width: 3px; background-color: rgba(255, 204, 0, 0.8);
             display: none; pointer-events: none; z-index: 10; left: 0;
             will-change: transform;
         }
 
-        /* FIXED: Prevent infinite layout loops in hidden container */
         #hidden-audio-player { 
             position: absolute; visibility: hidden; pointer-events: none; 
             width: 0; height: 0; overflow: hidden;
@@ -133,9 +131,9 @@
             </div>
             
             <button id="play-pause-btn" disabled>Play Piano</button>
-            <button id="record-btn" disabled>Record</button>
-            <button id="record-with-piano-btn" disabled>Record with Piano</button>
-            <button id="play-recording-btn" disabled>Play Recording</button>
+            <button id="record-btn" disabled>🎤 Record</button>
+            <button id="record-with-piano-btn" disabled>🎹 Record with Piano</button>
+            <button id="play-recording-btn" disabled>▶ Play Recording</button>
             
             <div class="bar-controls">
                 <label>Bars</label>
@@ -177,6 +175,10 @@
         
         window.loopStartBar = 1;
         window.loopEndBar = 1;
+
+        // FIXED: We now keep the FULL data in memory, but only feed slices of it to Chart.js
+        window.fullScoreData = [];
+        window.fullRecordedData = [];
 
         const countdownOverlay = document.getElementById('countdown-overlay');
         const startBarInput = document.getElementById('start-bar-input');
@@ -223,7 +225,6 @@
             return '';
         }
 
-        // FIXED: Zero-cost cursor updates
         function updateCursor() {
             const cursorEl = document.getElementById('playback-cursor');
             if (!pitchChart.chartArea) {
@@ -237,7 +238,6 @@
                 if (window.currentCursorBeat >= xAxis.min && window.currentCursorBeat <= xAxis.max) {
                     const xPixel = xAxis.getPixelForValue(window.currentCursorBeat);
                     cursorEl.style.display = 'block';
-                    // Use GPU transform instead of layout-triggering left
                     cursorEl.style.transform = `translateX(${xPixel + 15}px)`; 
                     cursorEl.style.top = (pitchChart.chartArea.top + 15) + 'px';
                     cursorEl.style.height = (pitchChart.chartArea.bottom - pitchChart.chartArea.top) + 'px';
@@ -265,11 +265,37 @@
             const minBeat = window.currentStartBar * window.beatsPerBar;
             const maxBeat = (window.currentStartBar + displayBars) * window.beatsPerBar;
 
+            // FIXED: Dynamically slice the background array so Chart.js only renders what is currently visible
+            const visibleScore = [];
+            for (let i = 0; i < window.fullScoreData.length; i += 3) {
+                const p1 = window.fullScoreData[i];
+                const p2 = window.fullScoreData[i+1];
+                const p3 = window.fullScoreData[i+2];
+                
+                if (p1 && p2) {
+                    // Check if the start and end overlap the visible window
+                    if (p2.x >= minBeat && p1.x <= maxBeat) {
+                        visibleScore.push(p1, p2, p3);
+                    }
+                }
+            }
+            pitchChart.data.datasets[0].data = visibleScore;
+
+            // FIXED: Dynamically slice the recorded vocal data too
+            const visibleRecord = [];
+            for (let i = 0; i < window.fullRecordedData.length; i++) {
+                const pt = window.fullRecordedData[i];
+                if (pt.x === null || (pt.x >= minBeat && pt.x <= maxBeat)) {
+                    visibleRecord.push(pt);
+                }
+            }
+            pitchChart.data.datasets[1].data = visibleRecord;
+
             pitchChart.options.scales.x.min = minBeat;
             pitchChart.options.scales.x.max = maxBeat;
             
             pitchChart.update('none');
-            updateCursor(); // Sync DOM cursor immediately when panned
+            updateCursor(); 
         }
 
         function autoFollowCursor() {
@@ -367,7 +393,7 @@
         const ctx = document.getElementById('pitchChart').getContext('2d');
         const pitchChart = new Chart(ctx, {
             type: 'scatter',
-            plugins: [regionShadingPlugin, lyricsPlugin], // Removed heavy canvas cursor
+            plugins: [regionShadingPlugin, lyricsPlugin], 
             data: {
                 datasets: [
                     {
@@ -377,9 +403,7 @@
                         backgroundColor: '#0056b3',
                         showLine: true,
                         pointRadius: (context) => {
-                            if (context.type === 'data') {
-                                return context.dataIndex % 3 === 0 ? 2 : 0;
-                            }
+                            if (context.type === 'data') return context.dataIndex % 3 === 0 ? 2 : 0;
                             return 0;
                         },
                         pointHitRadius: 10, 
@@ -695,7 +719,8 @@
             score.tracks.forEach((t, i) => {
                 api.changeTrackVolume(t, i === trackIndex ? 1 : 0);
             });
-            // FIXED: Removed api.renderTracks([track]) to stop background layout thrashing
+            
+            // FIXED: Removed api.renderTracks to stop AlphaTab from rendering background visual elements
         }
 
         api.scoreLoaded.on((score) => {
@@ -769,6 +794,7 @@
             if (window.globalXmlString) {
                 const parsed = parseXMLToGraph(window.globalXmlString, selectedPartId);
                 
+                window.fullScoreData = parsed.data;
                 window.totalBeats = parsed.totalBeats;
                 window.totalBars = Math.ceil(window.totalBeats / window.beatsPerBar);
                 
@@ -782,7 +808,6 @@
                 
                 window.currentStartBar = 0;
 
-                pitchChart.data.datasets[0].data = parsed.data;
                 pitchChart.options.scales.y.min = parsed.yMin;
                 pitchChart.options.scales.y.max = parsed.yMax;
                 
@@ -821,6 +846,9 @@
                 
                 const parsed = parseXMLToGraph(xmlString, initialPartId);
                 
+                window.fullScoreData = parsed.data;
+                window.fullRecordedData = [];
+                
                 window.totalBeats = parsed.totalBeats;
                 window.totalBars = Math.ceil(window.totalBeats / window.beatsPerBar);
                 
@@ -836,7 +864,6 @@
                 
                 window.currentStartBar = 0;
 
-                pitchChart.data.datasets[0].data = parsed.data;
                 pitchChart.options.scales.y.min = parsed.yMin;
                 pitchChart.options.scales.y.max = parsed.yMax;
                 
@@ -1004,6 +1031,8 @@
 
                 window.currentCursorBeat = startOffsetBeats;
                 window.currentStartBar = window.loopStartBar - 1;
+                
+                window.fullRecordedData = [];
                 updateChartWindow();
                 
                 if (withPiano) {
@@ -1062,7 +1091,6 @@
                         microphone = audioContext.createMediaStreamSource(stream);
                         microphone.connect(analyser);
                         
-                        pitchChart.data.datasets[1].data = [];
                         isRecording = true;
                         window.isCursorActive = true; 
 
@@ -1097,7 +1125,9 @@
                                 const midiNote = 12 * Math.log2(freq / 440) + 69;
                                 
                                 if (midiNote >= yMinVisible && midiNote <= yMaxVisible) {
-                                    pitchChart.data.datasets[1].data.push({ x: window.currentCursorBeat, y: midiNote });
+                                    const newPt = { x: window.currentCursorBeat, y: midiNote };
+                                    window.fullRecordedData.push(newPt);
+                                    pitchChart.data.datasets[1].data.push(newPt);
                                 }
                             }
 
