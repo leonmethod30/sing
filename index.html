@@ -18,10 +18,18 @@
             margin: 0; padding: 15px; background-color: #f0f2f5; color: #333;
         }
         .container { max-width: 1000px; margin: 0 auto; width: 100%; }
+        
+        /* UPDATED: Split toolbar into rows for better organization */
         .toolbar {
             background: #ffffff; padding: 15px; border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px;
-            display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+            display: flex; flex-direction: column; gap: 15px;
+        }
+        .toolbar-row {
+            display: flex; gap: 10px; align-items: center; flex-wrap: wrap; width: 100%;
+        }
+        .button-row {
+            display: flex; gap: 10px; align-items: center; flex-wrap: wrap; width: 100%;
         }
         
         button, .btn {
@@ -125,38 +133,53 @@
     <div class="container">
         <div class="toolbar">
             
-            <div class="bar-controls">
-                <label>Score:</label>
-                <select id="music-select">
-                    <option value="" disabled selected>Select Music...</option>
-                </select>
+            <div class="toolbar-row">
+                <div class="bar-controls">
+                    <label>Score:</label>
+                    <select id="music-select">
+                        <option value="" disabled selected>Select Music...</option>
+                    </select>
+                </div>
+
+                <input type="file" id="file-input" accept=".xml,.musicxml" style="display: none;">
+                
+                <div class="bar-controls">
+                    <label>Part:</label>
+                    <select id="part-select" disabled></select>
+                </div>
+                
+                <div class="bar-controls">
+                    <label>Bars</label>
+                    <input type="number" id="start-bar-input" value="1" min="1" disabled>
+                    <span>to</span>
+                    <input type="number" id="end-bar-input" value="1" min="1" disabled>
+                </div>
+
+                <div class="bar-controls">
+                    <label>Max Bars:</label>
+                    <input type="number" id="max-bars-input" value="4" min="1">
+                </div>
+
+                <div class="bar-controls">
+                    <label>Countdown:</label>
+                    <input type="number" id="countdown-input" value="4" min="0">
+                </div>
+
+                <div class="checkbox-control">
+                    <input type="checkbox" id="lyrics-checkbox" checked>
+                    <label for="lyrics-checkbox">Lyrics</label>
+                </div>
+
+                <span id="status">Loading audio engine...</span>
             </div>
 
-            <input type="file" id="file-input" accept=".xml,.musicxml" style="display: none;">
-            
-            <div class="bar-controls">
-                <label>Part:</label>
-                <select id="part-select" disabled></select>
+            <div class="button-row">
+                <button id="play-pause-btn" disabled>Play Piano</button>
+                <button id="record-btn" disabled>🎤 Record</button>
+                <button id="record-with-piano-btn" disabled>🎹 Record with Piano</button>
+                <button id="play-recording-btn" disabled>▶ Play Recording</button>
             </div>
             
-            <button id="play-pause-btn" disabled>Play Piano</button>
-            <button id="record-btn" disabled>🎤 Record</button>
-            <button id="record-with-piano-btn" disabled>🎹 Record with Piano</button>
-            <button id="play-recording-btn" disabled>▶ Play Recording</button>
-            
-            <div class="bar-controls">
-                <label>Bars</label>
-                <input type="number" id="start-bar-input" value="1" min="1" disabled>
-                <span>to</span>
-                <input type="number" id="end-bar-input" value="1" min="1" disabled>
-            </div>
-
-            <div class="checkbox-control">
-                <input type="checkbox" id="lyrics-checkbox" checked>
-                <label for="lyrics-checkbox">Lyrics</label>
-            </div>
-
-            <span id="status">Loading audio engine...</span>
         </div>
 
         <div id="graph-wrapper">
@@ -169,7 +192,6 @@
     </div>
 
     <script>
-        // FIXED: Alphabetical order
         const availableMusicFiles = [
             "because-of-you.xml",
             "man-i-need.xml",
@@ -200,6 +222,8 @@
         const countdownOverlay = document.getElementById('countdown-overlay');
         const startBarInput = document.getElementById('start-bar-input');
         const endBarInput = document.getElementById('end-bar-input');
+        const maxBarsInput = document.getElementById('max-bars-input');
+        const countdownInput = document.getElementById('countdown-input');
         const lyricsCheckbox = document.getElementById('lyrics-checkbox');
         const playPauseBtn = document.getElementById('play-pause-btn');
         const partSelect = document.getElementById('part-select');
@@ -210,19 +234,29 @@
         let alphaTabNotesIndex = [];
         let currentlyHoveredNoteIndex = null;
 
+        // Build music dropdown
         availableMusicFiles.forEach(fileName => {
             const opt = document.createElement('option');
-            opt.value = fileName; // Internal value remains exact file path
-            opt.textContent = fileName.replace('.xml', ''); // FIXED: Removed .xml extension for display
+            opt.value = fileName; 
+            opt.textContent = fileName.replace('.xml', ''); 
             musicSelect.appendChild(opt);
         });
         const customOpt = document.createElement('option');
         customOpt.value = 'custom';
-        customOpt.textContent = 'Upload Custom XML...';
+        customOpt.textContent = 'custom'; // FIXED: Changed label
         musicSelect.appendChild(customOpt);
 
         lyricsCheckbox.addEventListener('change', () => {
             pitchChart.update('none');
+        });
+
+        // Event listener for dynamic Max Bars
+        maxBarsInput.addEventListener('change', (e) => {
+            let val = parseInt(e.target.value);
+            if (isNaN(val) || val < 1) val = 1;
+            e.target.value = val;
+            window.visibleBars = val;
+            updateChartWindow();
         });
 
         function syncBarInputs() {
@@ -1107,62 +1141,47 @@
                 window.fullRecordedData = [];
                 updateChartWindow();
                 
-                if (withPiano) {
-                    recordBtn.style.display = 'none';
-                    recordWithPianoBtn.innerText = "🛑 Stop Recording";
-                    recordWithPianoBtn.classList.add("recording");
-                } else {
-                    recordWithPianoBtn.style.display = 'none';
-                    recordBtn.innerText = "🛑 Stop Recording";
-                    recordBtn.classList.add("recording");
-                }
-
                 recordBtn.disabled = true;
                 recordWithPianoBtn.disabled = true;
                 playPauseBtn.disabled = true;
                 playRecordingBtn.disabled = true; 
                 
-                let countdownBeat = 4;
-                statusText.innerText = `Recording starts in: ${countdownBeat}...`;
-                
-                countdownOverlay.style.display = 'flex';
-                countdownOverlay.innerText = countdownBeat;
-
-                const msPerBeat = 60000 / window.currentBPM;
                 const beatsPerSecond = window.currentBPM / 60;
-                
-                const countdownTimer = setInterval(() => {
-                    countdownBeat--;
-                    
-                    if (countdownBeat > 0) {
-                        statusText.innerText = `Recording starts in: ${countdownBeat}...`;
-                        countdownOverlay.innerText = countdownBeat; 
-                    } else {
-                        clearInterval(countdownTimer);
-                        countdownOverlay.style.display = 'none'; 
-                        
-                        if (withPiano) recordWithPianoBtn.disabled = false;
-                        else recordBtn.disabled = false;
-                        
-                        audioChunks = [];
-                        mediaRecorder = new MediaRecorder(stream);
-                        
-                        mediaRecorder.ondataavailable = event => {
-                            if (event.data.size > 0) audioChunks.push(event.data);
-                        };
-                        
-                        mediaRecorder.onstop = () => {
-                            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' }); 
-                            const audioUrl = URL.createObjectURL(audioBlob);
-                            recordedAudio.src = audioUrl; 
-                            playRecordingBtn.disabled = false; 
-                        };
+                let countdownBeat = parseInt(document.getElementById('countdown-input').value);
+                if (isNaN(countdownBeat) || countdownBeat < 0) countdownBeat = 0;
 
-                        analyser = audioContext.createAnalyser();
-                        analyser.fftSize = 2048;
-                        microphone = audioContext.createMediaStreamSource(stream);
-                        microphone.connect(analyser);
-                        
+                const startRecordingCallback = () => {
+                    if (withPiano) {
+                        recordBtn.style.display = 'none';
+                        recordWithPianoBtn.innerText = "🛑 Stop Recording";
+                        recordWithPianoBtn.classList.add("recording");
+                        recordWithPianoBtn.disabled = false;
+                    } else {
+                        recordWithPianoBtn.style.display = 'none';
+                        recordBtn.innerText = "🛑 Stop Recording";
+                        recordBtn.classList.add("recording");
+                        recordBtn.disabled = false;
+                    }
+                    
+                    audioChunks = [];
+                    mediaRecorder = new MediaRecorder(stream);
+                    
+                    mediaRecorder.ondataavailable = event => {
+                        if (event.data.size > 0) audioChunks.push(event.data);
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' }); 
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        recordedAudio.src = audioUrl; 
+                        playRecordingBtn.disabled = false; 
+                    };
+
+                    analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 2048;
+                    microphone = audioContext.createMediaStreamSource(stream);
+                    microphone.connect(analyser);
+                    
                         isRecording = true;
                         window.isCursorActive = true; 
 
@@ -1214,8 +1233,29 @@
                             }
 
                         }, 10);
-                    }
-                }, msPerBeat); 
+                };
+
+                if (countdownBeat > 0) {
+                    statusText.innerText = `Recording starts in: ${countdownBeat}...`;
+                    countdownOverlay.style.display = 'flex';
+                    countdownOverlay.innerText = countdownBeat;
+
+                    const msPerBeat = 60000 / window.currentBPM;
+                    const countdownTimer = setInterval(() => {
+                        countdownBeat--;
+                        
+                        if (countdownBeat > 0) {
+                            statusText.innerText = `Recording starts in: ${countdownBeat}...`;
+                            countdownOverlay.innerText = countdownBeat; 
+                        } else {
+                            clearInterval(countdownTimer);
+                            countdownOverlay.style.display = 'none'; 
+                            startRecordingCallback();
+                        }
+                    }, msPerBeat); 
+                } else {
+                    startRecordingCallback();
+                }
 
             } catch (err) {
                 console.error("Microphone access denied:", err);
